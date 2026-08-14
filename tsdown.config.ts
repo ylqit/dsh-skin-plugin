@@ -21,7 +21,7 @@ const host: UserConfig = {
   clean: true,
   deps: {
     neverBundle: [
-      '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-ui-theme', '@deepseek-ai/dsh-invariants',
+      '@deepseek-ai/cordis', '@deepseek-ai/dsh-invariants',
       'lightningcss', 'tsdown',
     ],
   },

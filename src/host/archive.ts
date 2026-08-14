@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { unzipSync, type UnzipFileInfo } from 'fflate'
-import { THEME_PARTS_VERSION as HARNESS_THEME_PARTS_VERSION, validateThemeLayer } from '@deepseek-ai/dsh-client-ui-theme'
+import { validateThemeLayer } from '../shared/theme-layer.ts'
 import {
   SKIN_CAPABILITIES, SKIN_PLACEMENTS, SKIN_SCHEMA_VERSION, SKIN_SCHEMA_VERSION_V2, THEME_PARTS_VERSION,
   type SkinAssetManifest, type SkinExperienceDescriptor, type SkinExperienceManifest,
@@ -144,7 +144,7 @@ function parseManifest(value: unknown): SkinManifest {
 }
 
 function commonManifest(source: Record<string, unknown>, schemaVersion: 1 | 2) {
-  if (source.themePartsVersion !== THEME_PARTS_VERSION || source.themePartsVersion !== HARNESS_THEME_PARTS_VERSION) {
+  if (source.themePartsVersion !== THEME_PARTS_VERSION) {
     throw new TypeError(`manifest.json.themePartsVersion must be ${String(THEME_PARTS_VERSION)}`)
   }
   if (!Array.isArray(source.capabilities)) throw new TypeError('manifest.json.capabilities must be an array')

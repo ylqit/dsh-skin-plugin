@@ -1,17 +1,17 @@
 import { strToU8, zipSync, type Zippable } from 'fflate'
 import { flushSync } from 'react-dom'
 import type {
-  CommitSkinResult, PrepareSkinResult, SkinAssetManifest, SkinExperienceDescriptor,
-  SkinHostState, SkinManifest, SkinPlacement, ThemeBackdropMode, ThemeColorValue,
-  ThemeLayerDefinition, ThemePartRule, ThemePartStyle,
+  CommitSkinResult, PrepareSkinResult, SkinAssetManifest,
+  SkinHostState, SkinManifest, ThemeBackdropMode, ThemeColorValue,
+  ThemeLayerDefinition, ThemePartId, ThemePartInspection, ThemePartRule, ThemePartStyle,
+  ThemeTokenInspection,
 } from '../shared/contracts.ts'
 import {
-  SKIN_PLACEMENTS, SKIN_SCHEMA_VERSION, SKIN_SCHEMA_VERSION_V2, THEME_PARTS_VERSION,
+  SKIN_SCHEMA_VERSION, SKIN_SCHEMA_VERSION_V2, THEME_PARTS_VERSION,
 } from '../shared/contracts.ts'
-import type {
-  ClientModuleLoader, HostObservable, LoadedExperience, SkinExperienceModule,
-  SkinExperienceSnapshot, StudioSnapshot, ThemeService,
-} from './contracts.ts'
+import { THEME_PART_CATALOG, THEME_TOKEN_NAMES } from '../shared/theme-layer.ts'
+import type { StudioSnapshot, ThemeService } from './contracts.ts'
+import { presentSkinLayer } from './present.ts'
 
 const API = '/api/dsh-skin'
 const PREVIEW_SOURCE = '@deepseek-ai/dsh-skin-plugin/preview'
@@ -30,15 +30,12 @@ interface PresentationLane {
   key: string
   themeId: string
   disposeTheme?: () => void
-  experience?: LoadedExperience
 }
 
-/** Browser controller: one complete draft per update and one active/preview installation per lane. */
+/** Browser controller: one complete draft per update and one active/overlay lane per presentation. */
 export class SkinStudioController {
   private readonly listeners = new Set<() => void>()
   private snapshotValue: StudioSnapshot
-  readonly experience: HostObservable<SkinExperienceSnapshot | undefined>
-  private readonly experienceState: ExperienceObservable
   private activeLane: PresentationLane | undefined
   private previewLane: PresentationLane | undefined
   private eventSource: EventSource | undefined
@@ -49,12 +46,9 @@ export class SkinStudioController {
 
   constructor(
     private readonly theme: ThemeService,
-    private readonly modules: ClientModuleLoader,
     localManagement: boolean,
   ) {
     this.mode = theme.getTheme().active.colorScheme
-    this.experienceState = new ExperienceObservable()
-    this.experience = this.experienceState
     this.snapshotValue = {
       host: undefined,
       draft: starterLayer(),
@@ -63,8 +57,8 @@ export class SkinStudioController {
       previewing: false,
       localManagement,
       error: undefined,
-      tokens: Object.freeze(theme.exportInspectTokens()),
-      parts: Object.freeze(theme.exportInspectParts()),
+      tokens: inspectTokens(),
+      parts: inspectParts(),
     }
   }
 
@@ -89,7 +83,6 @@ export class SkinStudioController {
       this.previewLane = undefined
       this.releaseLane(this.activeLane)
       this.activeLane = undefined
-      this.experienceState.publish(undefined)
       this.revokeAssets()
     }
   }
@@ -112,8 +105,7 @@ export class SkinStudioController {
       const name = fingerprint === undefined
         ? '我的 Harness 皮肤'
         : summary?.name ?? '我的 Harness 皮肤'
-      const experience = await this.loadExperience(summary?.experience)
-      this.publishDraft(draft, name, assets, experience)
+      this.publishDraft(draft, name, assets)
     })
   }
 
@@ -244,7 +236,6 @@ export class SkinStudioController {
             fingerprint: host.activeFingerprint,
             layer: host.activeLayer,
             activationRevision: host.activationRevision,
-            ...(host.activeExperience === undefined ? {} : { experience: host.activeExperience }),
           })
           return
         }
@@ -271,24 +262,19 @@ export class SkinStudioController {
   cancelPreview(): void {
     const previous = this.previewLane
     if (previous === undefined) return
-    flushSync(() => {
-      previous.disposeTheme?.()
-      this.previewLane = undefined
-      this.publishExperience()
-      this.set({ previewing: false, error: undefined })
-    })
-    previous.experience?.handle.release()
+    previous.disposeTheme?.()
+    this.previewLane = undefined
+    this.set({ previewing: false, error: undefined })
   }
 
   setColorScheme(mode: 'light' | 'dark'): void {
     this.theme.setTheme(mode)
   }
 
-  /** Mirror ThemeRuntime's resolved mode into capability-free experience props. */
+  /** Mirror the official ThemeRuntime's resolved mode for display purposes. */
   setResolvedMode(mode: 'light' | 'dark'): void {
     if (this.mode === mode) return
     this.mode = mode
-    this.publishExperience()
   }
 
   deleteSkin(fingerprint: string): void {
@@ -308,7 +294,6 @@ export class SkinStudioController {
       await this.installActive({
         ...(host.activeFingerprint === undefined ? {} : { fingerprint: host.activeFingerprint }),
         ...(host.activeLayer === undefined ? {} : { layer: host.activeLayer }),
-        ...(host.activeExperience === undefined ? {} : { experience: host.activeExperience }),
         activationRevision: host.activationRevision,
       })
     } catch (error) {
@@ -322,47 +307,28 @@ export class SkinStudioController {
       : `${committed.fingerprint}:${String(committed.activationRevision)}`
     if (this.activeLane?.key === key && this.previewLane === undefined) return
 
-    let experience: LoadedExperience | undefined
-    const canPromote = committed.experience !== undefined
-      && this.previewLane?.experience?.descriptor.moduleId === committed.experience.moduleId
-      && this.previewLane.experience.descriptor.rev === committed.experience.rev
-    if (canPromote) {
-      experience = this.previewLane?.experience
-      if (this.previewLane !== undefined) delete this.previewLane.experience
-    } else {
-      experience = await this.loadExperience(committed.experience)
-    }
     if (committed.layer !== undefined) await preloadLayerImages(committed.layer)
+    const presentation = committed.layer === undefined || committed.fingerprint === undefined
+      ? undefined
+      : presentSkinLayer({
+          kind: 'active',
+          layer: committed.layer,
+          fingerprint: committed.fingerprint,
+          activationRevision: committed.activationRevision,
+        })
 
     const oldActive = this.activeLane
     const oldPreview = this.previewLane
-    let next: PresentationLane
-    try {
-      flushSync(() => {
-        const disposeTheme = committed.layer === undefined || committed.fingerprint === undefined
-          ? undefined
-          : this.theme.installSkin(committed.fingerprint, committed.layer, {
-              kind: 'active',
-              contentFingerprint: committed.fingerprint,
-              activationRevision: committed.activationRevision,
-            })
-        oldPreview?.disposeTheme?.()
-        next = {
-          key,
-          themeId: committed.fingerprint ?? 'harness-default',
-          ...(disposeTheme === undefined ? {} : { disposeTheme }),
-          ...(experience === undefined ? {} : { experience }),
-        }
-        this.activeLane = next
-        this.previewLane = undefined
-        this.publishExperience()
-        this.set({ previewing: false, error: undefined })
-      })
-    } catch (error) {
-      if (canPromote && oldPreview !== undefined && experience !== undefined) oldPreview.experience = experience
-      else experience?.handle.release()
-      throw error
-    }
+    flushSync(() => {
+      oldPreview?.disposeTheme?.()
+      this.activeLane = {
+        key,
+        themeId: committed.fingerprint ?? 'harness-default',
+        ...(presentation === undefined ? {} : { disposeTheme: presentation.dispose }),
+      }
+      this.previewLane = undefined
+      this.set({ previewing: false, error: undefined })
+    })
     this.releaseLane(oldActive)
     if (oldPreview !== undefined) this.releaseLane(oldPreview)
   }
@@ -371,44 +337,25 @@ export class SkinStudioController {
     if (prepared.layer === undefined || prepared.fingerprint === undefined) {
       throw new Error('Host returned an incomplete skin preparation')
     }
-    const experience = await this.loadExperience(prepared.experience)
-    try {
-      await preloadLayerImages(prepared.layer)
-      this.replacePreview(prepared.layer, prepared.fingerprint, experience)
-    } catch (error) {
-      experience?.handle.release()
-      throw error
-    }
+    await preloadLayerImages(prepared.layer)
+    this.replacePreview(prepared.layer, prepared.fingerprint)
   }
 
-  private replacePreview(
-    layer: ThemeLayerDefinition,
-    themeId: string,
-    experience?: LoadedExperience,
-  ): void {
+  private replacePreview(layer: ThemeLayerDefinition, themeId: string): void {
     const previous = this.previewLane
-    if (previous !== undefined && previous.experience === experience) delete previous.experience
-    let next: PresentationLane
-    try {
-      flushSync(() => {
-        const disposeTheme = this.theme.installSkin(PREVIEW_SOURCE, layer, {
-          kind: 'preview',
-          ...(themeId === PREVIEW_SOURCE ? {} : { contentFingerprint: themeId }),
-        })
-        next = {
-          key: `preview:${themeId}`,
-          themeId,
-          disposeTheme,
-          ...(experience === undefined ? {} : { experience }),
-        }
-        this.previewLane = next
-        this.publishExperience()
-        this.set({ previewing: true, error: undefined })
-      })
-    } catch (error) {
-      experience?.handle.release()
-      throw error
-    }
+    const presentation = presentSkinLayer({
+      kind: 'preview',
+      layer,
+      ...(themeId === PREVIEW_SOURCE ? {} : { fingerprint: themeId }),
+    })
+    flushSync(() => {
+      this.previewLane = {
+        key: `preview:${themeId}`,
+        themeId,
+        disposeTheme: presentation.dispose,
+      }
+      this.set({ previewing: true, error: undefined })
+    })
     this.releaseLane(previous)
   }
 
@@ -416,11 +363,10 @@ export class SkinStudioController {
     layer: ThemeLayerDefinition,
     draftName = this.snapshotValue.draftName,
     replacementAssets?: DraftAsset[],
-    experience = this.previewLane?.experience,
   ): void {
     this.set({ draft: layer, draftName })
     try {
-      this.replacePreview(layer, PREVIEW_SOURCE, experience)
+      this.replacePreview(layer, PREVIEW_SOURCE)
       if (replacementAssets !== undefined) this.replaceAssets(replacementAssets)
     } catch (error) {
       if (replacementAssets !== undefined) {
@@ -433,37 +379,8 @@ export class SkinStudioController {
     }
   }
 
-  private async loadExperience(descriptor: SkinExperienceDescriptor | undefined): Promise<LoadedExperience | undefined> {
-    if (descriptor === undefined) return undefined
-    const handle = await this.modules.loadDynamic({
-      id: descriptor.moduleId,
-      url: descriptor.url,
-      rev: descriptor.rev,
-    })
-    try {
-      const module = validateExperienceModule(handle.exports, descriptor)
-      await Promise.all(Object.values(descriptor.assets).map(preloadImage))
-      return { descriptor, module, handle }
-    } catch (error) {
-      handle.release()
-      throw error
-    }
-  }
-
-  private publishExperience(): void {
-    const lane = this.previewLane ?? this.activeLane
-    const loaded = lane?.experience
-    this.experienceState.publish(lane === undefined || loaded === undefined ? undefined : Object.freeze({
-      themeId: lane.themeId,
-      mode: this.mode,
-      assets: loaded.descriptor.assets,
-      components: loaded.module.components,
-    }))
-  }
-
   private releaseLane(lane: PresentationLane | undefined): void {
     lane?.disposeTheme?.()
-    lane?.experience?.handle.release()
   }
 
   private async buildArchive(): Promise<Uint8Array> {
@@ -594,6 +511,30 @@ export class SkinStudioController {
   }
 }
 
+/** Token picker data, generated locally from the internalized catalog. */
+function inspectTokens(): readonly ThemeTokenInspection[] {
+  return Object.freeze(THEME_TOKEN_NAMES.map(name => Object.freeze({
+    name,
+    description: name,
+    valueType: 'color',
+    requiresLightAndDark: true,
+    cssVariable: name,
+  })))
+}
+
+/** Part picker data, generated locally from the internalized catalog. */
+function inspectParts(): readonly ThemePartInspection[] {
+  return Object.freeze((Object.keys(THEME_PART_CATALOG) as ThemePartId[]).map((id) => {
+    const entry = THEME_PART_CATALOG[id]
+    return Object.freeze({
+      id,
+      variants: entry.variants,
+      states: entry.states,
+      properties: entry.properties,
+    })
+  }))
+}
+
 function starterLayer(): ThemeLayerDefinition {
   return {
     tokens: {
@@ -690,55 +631,7 @@ async function request<T = unknown>(input: string, init?: RequestInit): Promise<
 }
 
 function safeFilename(value: string): string {
-  return value.trim().replace(/[^A-Za-z0-9\u4e00-\u9fff_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'harness-skin'
-}
-
-class ExperienceObservable implements HostObservable<SkinExperienceSnapshot | undefined> {
-  private readonly listeners = new Set<() => void>()
-  private snapshot: SkinExperienceSnapshot | undefined
-
-  getSnapshot = (): SkinExperienceSnapshot | undefined => this.snapshot
-
-  subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener)
-    return () => { this.listeners.delete(listener) }
-  }
-
-  publish(snapshot: SkinExperienceSnapshot | undefined): void {
-    this.snapshot = snapshot
-    for (const listener of [...this.listeners]) listener()
-  }
-}
-
-function validateExperienceModule(
-  exportsValue: unknown,
-  descriptor: SkinExperienceDescriptor,
-): SkinExperienceModule {
-  if (typeof exportsValue !== 'object' || exportsValue === null) {
-    throw new TypeError('Experience Bundle 必须导出模块对象')
-  }
-  const namespace = exportsValue as Record<string, unknown>
-  const candidate = typeof namespace.default === 'object' && namespace.default !== null
-    ? namespace.default as Record<string, unknown>
-    : namespace
-  if (candidate.apiVersion !== 1) throw new TypeError('Experience Bundle apiVersion 必须为 1')
-  if (typeof candidate.components !== 'object' || candidate.components === null || Array.isArray(candidate.components)) {
-    throw new TypeError('Experience Bundle components 必须为组件映射')
-  }
-  const components = candidate.components as Record<string, unknown>
-  const declared = new Set<SkinPlacement>(descriptor.placements)
-  for (const key of Object.keys(components)) {
-    if (!SKIN_PLACEMENTS.includes(key as SkinPlacement)) throw new TypeError(`Experience Bundle 含未知 Placement ${JSON.stringify(key)}`)
-    if (!declared.has(key as SkinPlacement)) throw new TypeError(`Experience Bundle 未在 manifest 登记 Placement ${JSON.stringify(key)}`)
-    if (typeof components[key] !== 'function') throw new TypeError(`Experience Placement ${JSON.stringify(key)} 必须导出 React 组件`)
-  }
-  for (const placement of declared) {
-    if (typeof components[placement] !== 'function') throw new TypeError(`Experience Bundle 缺少已登记组件 ${JSON.stringify(placement)}`)
-  }
-  return Object.freeze({
-    apiVersion: 1,
-    components: Object.freeze({ ...components }) as SkinExperienceModule['components'],
-  })
+  return value.trim().replace(/[^A-Za-z0-9一-鿿_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'harness-skin'
 }
 
 async function preloadLayerImages(layer: ThemeLayerDefinition): Promise<void> {

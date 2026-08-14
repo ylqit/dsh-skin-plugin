@@ -2,11 +2,10 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { fileURLToPath } from 'node:url'
-import { registerThemeBootSource } from '@deepseek-ai/dsh-client-ui-theme'
+import { createSkinBootInjector } from './host/boot.ts'
 import { registerSkinHttp, type SkinWebServer } from './host/http.ts'
 import { SkinLibrary } from './host/library.ts'
 
-const SOURCE = '@deepseek-ai/dsh-skin-plugin'
 const BUILTINS_ROOT = fileURLToPath(new URL('../builtins', import.meta.url))
 
 type DshHomePath = (...segments: string[]) => string
@@ -26,10 +25,11 @@ export async function apply(ctx: Context): Promise<void> {
     (error) => { ctx.logger.warn(error) },
     BUILTINS_ROOT,
   )
-  const unregisterBoot = registerThemeBootSource(ctx, SOURCE, () => library.activeBoot())
+  const injectSkinBoot = createSkinBootInjector(() => library.activeBoot())
+  const untapIndex = webServer.tapIndex(injectSkinBoot)
   const unregisterHttp = registerSkinHttp(webServer, library)
   ctx.effect(() => () => {
     unregisterHttp()
-    unregisterBoot()
+    untapIndex()
   }, 'dsh-skin-plugin: host routes and first-paint provider')
 }

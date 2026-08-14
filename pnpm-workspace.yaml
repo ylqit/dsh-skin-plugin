@@ -1,5 +1,11 @@
 packages: []
 
+# Peer APIs (@deepseek-ai/dsh-*, cordis, react) resolve at runtime from the dsh
+# profile tree, never from this repo's own install. Keeping auto peers out
+# prevents a registry copy from shadowing the running Harness instance — the
+# failure class behind the 0.1.0 THEME_PARTS_VERSION boot error.
+autoInstallPeers: false
+
 allowBuilds:
   esbuild: true
 

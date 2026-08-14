@@ -30,11 +30,6 @@ export function registerSkinHttp(server: SkinWebServer, library: SkinLibrary): (
     }
   }
   const unsubscribe = library.subscribe(publish)
-  const untapIndex = server.tapIndex((html) => {
-    const experience = library.activeExperience()
-    if (experience === undefined) return html
-    return html.replace('<head>', `<head><link rel="preload" as="script" href="${experience.url}">`)
-  })
   const unregister = server.register({
     kind: 'prefix',
     path: PREFIX,
@@ -51,7 +46,6 @@ export function registerSkinHttp(server: SkinWebServer, library: SkinLibrary): (
   })
   return () => {
     unsubscribe()
-    untapIndex()
     unregister()
     for (const response of streams) response.end()
     streams.clear()

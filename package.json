@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-skin-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Safe synchronized component skins and a visual theme studio for DeepSeek Harness WebUI",
   "license": "MIT",
   "type": "module",
@@ -32,10 +32,8 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-modules",
         "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-theme"
+        "@deepseek-ai/dsh-client-ui-settings"
       ],
       "platform": "web"
     }
@@ -46,16 +44,13 @@
     "skin:create": "node lib/cli.js create",
     "skin:pack": "node lib/cli.js pack",
     "test": "vitest run",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm test && pnpm build && node scripts/check-contract.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.1 <5",
     "@deepseek-ai/dsh-client-connection": ">=0.1.0-rc.5 <0.2",
-    "@deepseek-ai/dsh-client-modules": ">=0.1.0-rc.5 <0.2",
     "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.0-rc.5 <0.2",
     "@deepseek-ai/dsh-client-ui-settings": ">=0.1.0-rc.5 <0.2",
-    "@deepseek-ai/dsh-client-ui-theme": ">=0.1.0-rc.5 <0.2",
-    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.5 <0.2",
     "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.5 <0.2",
     "react": ">=18.2.0 <20",
     "react-dom": ">=18.2.0 <20"

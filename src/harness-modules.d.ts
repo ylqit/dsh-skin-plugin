@@ -1,19 +1,3 @@
-declare module '@deepseek-ai/dsh-client-ui-theme' {
-  export const THEME_PARTS_VERSION: number
-  export function validateThemeLayer(value: unknown): import('./shared/contracts.ts').ThemeLayerDefinition
-  export function compileThemeLayerCss(value: unknown): string
-  export function themeLayerFingerprint(value: unknown): string
-  export function registerThemeBootSource(
-    ctx: import('@deepseek-ai/cordis').Context,
-    source: string,
-    read: () => {
-      activationRevision: number
-      contentFingerprint: string
-      layer: import('./shared/contracts.ts').ThemeLayerDefinition
-    } | undefined,
-  ): () => void
-}
-
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
   import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
   export function Button(props: ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -25,7 +9,7 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export function Modal(props: {
     open: boolean
     onClose: () => void
-    title: string
+    title?: ReactNode
     children?: ReactNode
     footer?: ReactNode
   }): ReactNode

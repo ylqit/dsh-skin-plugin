@@ -1,60 +1,27 @@
 import type {
-  SkinExperienceDescriptor, SkinHostState, SkinPlacement, ThemeLayerDefinition,
-  ThemePartInspection, ThemeTokenInspection,
+  SkinHostState, ThemeLayerDefinition, ThemePartInspection, ThemeTokenInspection,
 } from '../shared/contracts.ts'
-import type { ComponentType } from 'react'
 
 export interface HostObservable<T> {
   getSnapshot(): T
   subscribe(listener: () => void): () => void
 }
 
+/**
+ * Structural slice of the official ThemeRuntime service (`ctx.theme`,
+ * provided by the in-box ui-theme client plugin in every official release).
+ * Only surfaces stable in official dsh are declared; skin presentation is
+ * owned by this plugin instead of a Harness API.
+ */
 export interface ThemeService {
   getTheme(): {
     active: { colorScheme: 'light' | 'dark' }
-    skin?: { contentFingerprint?: string; activationRevision?: number }
   }
-  installSkin(source: string, layer: ThemeLayerDefinition, options: {
-    kind: 'active' | 'preview'
-    contentFingerprint?: string
-    activationRevision?: number
-  }): () => void
-  exportInspectTokens(): ThemeTokenInspection[]
-  exportInspectParts(): ThemePartInspection[]
   setTheme(id: 'light' | 'dark' | 'system'): void
-}
-
-export interface ClientDynamicModuleHandle {
-  readonly id: string
-  readonly exports: unknown
-  release(): void
-}
-
-export interface ClientModuleLoader {
-  loadDynamic(row: { id: string; url: string; rev: string }): Promise<ClientDynamicModuleHandle>
-}
-
-export interface SkinExperienceComponentProps {
-  themeId: string
-  mode: 'light' | 'dark'
-  assets: Readonly<Record<string, string>>
-}
-
-export interface SkinExperienceModule {
-  apiVersion: 1
-  components: Partial<Record<SkinPlacement, ComponentType<SkinExperienceComponentProps>>>
-}
-
-export interface SkinExperienceSnapshot {
-  themeId: string
-  mode: 'light' | 'dark'
-  assets: Readonly<Record<string, string>>
-  components: SkinExperienceModule['components']
 }
 
 export interface ClientContext {
   theme: ThemeService
-  modules: ClientModuleLoader
   connection: { isLoopback: boolean }
   slots: {
     inject(name: string, callback: () => (() => void)): () => void
@@ -92,15 +59,4 @@ export interface SkinStudioInjected {
   cancelPreview(): void
   setColorScheme(mode: 'light' | 'dark'): void
   deleteSkin(fingerprint: string): void
-}
-
-export interface SkinPlacementInjected {
-  placement: SkinPlacement
-  hooks: { experience: HostObservable<SkinExperienceSnapshot | undefined> }
-}
-
-export interface LoadedExperience {
-  descriptor: SkinExperienceDescriptor
-  module: SkinExperienceModule
-  handle: ClientDynamicModuleHandle
 }
