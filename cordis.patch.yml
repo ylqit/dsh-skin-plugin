@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-skin-plugin
+      name: '@deepseek-ai/dsh-skin-plugin'
