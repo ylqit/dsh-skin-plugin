@@ -1,9 +1,13 @@
 **/.DS_Store
 *.log
 *.tmp
+node_modules/
+lib/
+coverage/
 .DS_Store
 .idea/
 .vscode/
 
 
 docs
+reference

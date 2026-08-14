@@ -13,6 +13,7 @@ export interface SkinWebServer {
     path: string
     handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>
   }): () => void
+  tapIndex(transform: (html: string) => string): () => void
 }
 
 /** Register the same-origin management, immutable asset, and invalidation endpoints. */
@@ -29,6 +30,11 @@ export function registerSkinHttp(server: SkinWebServer, library: SkinLibrary): (
     }
   }
   const unsubscribe = library.subscribe(publish)
+  const untapIndex = server.tapIndex((html) => {
+    const experience = library.activeExperience()
+    if (experience === undefined) return html
+    return html.replace('<head>', `<head><link rel="preload" as="script" href="${experience.url}">`)
+  })
   const unregister = server.register({
     kind: 'prefix',
     path: PREFIX,
@@ -45,6 +51,7 @@ export function registerSkinHttp(server: SkinWebServer, library: SkinLibrary): (
   })
   return () => {
     unsubscribe()
+    untapIndex()
     unregister()
     for (const response of streams) response.end()
     streams.clear()
@@ -90,6 +97,18 @@ async function dispatch(
       'X-Content-Type-Options': 'nosniff',
     })
     response.end(asset.bytes)
+    return
+  }
+  const experienceMatch = new RegExp(`^${PREFIX}/experience/(${FINGERPRINT})/client\\.js$`).exec(pathname)
+  if (method === 'GET' && experienceMatch !== null) {
+    const experience = library.experience(experienceMatch[1] as string)
+    response.writeHead(200, {
+      'Content-Type': 'text/javascript; charset=utf-8',
+      'Content-Length': experience.bytes.byteLength,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+    })
+    response.end(experience.bytes)
     return
   }
 

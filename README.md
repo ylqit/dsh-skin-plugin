@@ -1,85 +1,105 @@
 # DSH Skin Plugin
 
-DeepSeek Harness WebUI 的同步组件换肤插件。一个皮肤会在同一呈现修订中切换 Light/Dark 语义 Token、背景和已登记核心组件的外观状态；它不替换 React 组件、DOM 结构、业务行为或可访问性语义。
+DeepSeek Harness WebUI 的同步组件换肤插件。一次主题切换同时发布 Light/Dark Token、背景、公共 Component Part 样式，以及挂载在专用主题 Slot 中的 React 装饰组件；它不替换会话、输入区、侧栏等业务组件逻辑，也不会把 Cordis `ctx`、会话 Hook 或业务操作交给主题组件。
 
 ## 兼容范围
 
-本插件需要包含同步皮肤合同的 DeepSeek Harness：`THEME_PARTS_VERSION = 1`、`ThemeRuntime.installSkin()`、`registerThemeBootSource()` 和公共 Component Part 属性必须同时存在。它是一个树外 npm 包，并在同一个 `package.json` 中声明 `dsh.bundle` 与 `dsh.client`；Host 负责持久化与管理 API，Browser 插件负责 Active Skin 同步和主题工作室。
+插件需要包含以下合同的 DeepSeek Harness：`THEME_PARTS_VERSION = 1`、`ThemeRuntime.installSkin()`、六个 `skin.*` Slot，以及 `modules.loadDynamic()`。该包同时声明 `dsh.bundle` 与 `dsh.client`：Host 管理不可变主题库、首屏样式和本地管理 API，Browser 负责 Active/Preview 同步、动态 Experience 生命周期与主题工作室。
 
-## 构建与安装
+## 构建、安装与上传
 
 ```powershell
 pnpm install
 pnpm build
 dsh plugin --profile web add D:\soft\AI\company-project\dsh-skin-plugin
+dsh --profile web
 ```
 
-源码开发时也可以把最后一个参数换成本工作树路径。构建产物是 `lib/index.js` 与 `lib/client.js`。安装后在 WebUI 的“设置 → 外观主题”打开主题工作室。
+启动后打开“设置 → 外观主题”：
 
-主题库位于 `$DSH_HOME/skins`。每次导入按内容指纹写入不可变目录；`state.json` 记录 `active`、`previousConfirmed` 与 `activationRevision`。激活使用 prepare/commit 两阶段：浏览器先安装完整 Preview，Host 确认持久化 Active 后，浏览器观察并安装同一 Active Revision，最后才卸载 Preview。
+1. 在“内置主题”中试穿皮卡丘、杰尼龟或妙蛙种子，或点击“导入 `.dshskin`”上传本地包。
+2. Studio 先加载并校验 Light/Dark 图片、结构化 Part Styles 和完整 Experience Bundle；任一环节失败都会保留上一套有效主题。
+3. 点击“编辑与试穿”进入 Preview，或点击“激活”执行 Host prepare/commit。
+4. 刷新后 Host 在模块脚本之前注入 Active Token、背景与 Part CSS，并预加载 Active Experience；Browser 接管同一修订后挂载主题组件。
 
-只有从 Host 本机访问的同源页面可以导入、编辑、删除或激活主题。远程客户端可读取并呈现 Active Skin，也会通过 SSE 收到修订通知，但管理请求返回 403。
+只有从 Host 本机访问的同源页面可以导入、编辑、删除或激活主题。远程客户端可呈现 Active Skin 并接收 SSE 修订通知，但管理请求返回 403。主题库位于 `$DSH_HOME/skins`；本地版本以内容指纹写入不可变目录，`state.json` 保存 `active`、`previousConfirmed` 与 `activationRevision`。内置主题从包内 `builtins/` 读取且不可删除。
 
-## `.dshskin` 格式
+## `.dshskin` v1 / v2
 
-`.dshskin` 是受限 ZIP 容器，必须包含 `manifest.json` 与 `theme.json`。例如：
+v1 继续支持安全数据皮肤：`manifest.json`、`theme.json` 和可选 `assets/*`，能力限于 Token、背景与 Part Styles。
+
+v2 在同一 ZIP 中增加 Light/Dark 卡片封面与可选的 `experience/client.js`：
 
 ```json
 {
-  "schemaVersion": 1,
-  "tokens": {
-    "--dsw-alias-brand-primary": {
-      "light": "#315efb",
-      "dark": "#7c9cff"
-    }
+  "schemaVersion": 2,
+  "id": "example-skin",
+  "name": "Example Skin",
+  "version": "1.0.0",
+  "themePartsVersion": 1,
+  "capabilities": ["tokens", "backdrop", "component-parts", "component-experience"],
+  "preview": {
+    "light": "asset:assets/backdrop-light.webp",
+    "dark": "asset:assets/backdrop-dark.webp"
   },
-  "backdrop": {
-    "light": {
-      "fallbackColor": "#f4f7fb",
-      "focusX": 0.5,
-      "focusY": 0.5,
-      "dim": 0.12,
-      "blurPx": 0
-    },
-    "dark": {
-      "fallbackColor": "#0b1020",
-      "focusX": 0.5,
-      "focusY": 0.5,
-      "dim": 0.28,
-      "blurPx": 0
-    }
-  },
-  "partStyles": [
-    {
-      "part": "primitive.button",
-      "variant": "primary",
-      "state": "hover",
-      "style": {
-        "light": { "background": "#244edb", "borderRadiusPx": 14 },
-        "dark": { "background": "#9ab0ff", "borderRadiusPx": 14 }
-      }
-    }
-  ]
+  "assets": [],
+  "experience": {
+    "apiVersion": 1,
+    "moduleId": "dsh-skin:00000000-0000-4000-8000-000000000000",
+    "entry": "experience/client.js",
+    "sha256": "...",
+    "bytes": 1,
+    "placements": ["skin.shell.top"]
+  }
 }
 ```
 
-对应的 `manifest.json` 必须声明 `schemaVersion: 1`、`themePartsVersion: 1`、实际使用的 `capabilities`，并为每个 PNG/JPEG/WebP 背景资源登记路径、MIME、字节数和 SHA-256。持久化主题只用 `asset:assets/<name>` 引用资源；Host 验证后才改写为不可变同源 URL。
+Experience 组件只接收：
 
-容器不接受 `theme.css`、JavaScript、React Bundle、自定义字体、任意选择器、CSS 变量定义、URL、`!important` 或改变布局/交互语义的属性。Host 会拒绝路径穿越、重复或伪造资源、哈希不符、非法图片签名、超限条目和压缩炸弹。Host 与 Client 都使用 Harness 的同一份 Part Catalog、验证器和 CSS 编译器。
+```ts
+interface SkinExperienceComponentProps {
+  themeId: string
+  mode: 'light' | 'dark'
+  assets: Readonly<Record<string, string>>
+}
+```
 
-## 主题工作室
+可用 Placement 为 `skin.shell.top`、`skin.shell.bottom`、`skin.shell.floating`、`skin.sidebar.brand`、`skin.conversation.hero` 与 `skin.composer.decorator`。Bundle 必须预编译为 Harness 的受管 CommonJS handoff；浏览器按 `moduleId + rev` 共享加载，在最后一个句柄释放时删除模块缓存和所属 CSS。
 
-工作室支持：
+Host 对 v1/v2 都拒绝路径穿越、未登记文件、MIME/图片签名不符、哈希或字节数不符、压缩炸弹、外部字体与 Host/Node 代码。v2 Experience 会按用户选择直接在 WebUI 主页面执行，技术上能够访问 DOM、网络和浏览器全局对象；它不是安全沙箱，只应导入你信任的包。
 
-- Light/Dark Token、背景焦点/暗化/模糊与图片编辑；
-- 按 Part、Variant、State 编辑允许的结构化组件字段；
-- 使用真实 Button、Input、Dialog、Menu 等 Primitives 预览；
-- 在当前 Shell、Conversation、Message、Composer、Tool Card 与 Settings 页面实时试穿；
-- 导入、保存、导出、Preview、激活、恢复默认和删除。
+## 创建高级主题
 
-每次编辑都会生成一份完整 Draft Layer。校验或图片解码失败时，页面保留最后一份有效 Preview，不执行部分 DOM 写入。
+先构建插件，然后创建模板：
 
-## 开发验证
+```powershell
+pnpm skin:create my-theme
+```
+
+该命令在当前目录创建 `my-theme/`。编辑：
+
+- `skin.config.json`：名称、版本、封面与 Placement；
+- `theme.json`：Token、Light/Dark 背景和 Part Styles；
+- `assets/backdrop-light.webp`、`assets/backdrop-dark.webp`：图片；
+- `experience/client.tsx` 与 CSS Module：无业务能力的主题装饰组件。
+
+打包命令会编译 TSX/CSS Modules、生成随机模块 ID、检查运行时 import、登记每个资源的 MIME/大小/SHA-256，并输出经过静态校验的 v2 包：
+
+```powershell
+pnpm skin:pack D:\path\to\my-theme
+```
+
+默认输出为 `<theme-directory>/dist/<id>-<version>.dshskin`。也可以直接运行 `dsh-skin pack <theme-directory> <output.dshskin>` 指定位置。Host 导入时仍会使用当前 Harness 的权威 Part Catalog 和主题编译器重新验证。
+
+## 内置宝可梦演示主题
+
+- 皮卡丘：黄色电属性 Token、能量顶栏、精灵球纹样、同步招式槽与闪电浮动徽章。
+- 杰尼龟：蓝色水属性 Token、水舱背景、气泡浮层、水枪招式计量条。
+- 妙蛙种子：绿色草/毒属性 Token、藤叶品牌区、搭档状态与藤鞭成长卡。
+
+六张 Light/Dark 场景由图像生成工具创建，角色透明图来自 [PokeAPI sprites 的 official-artwork 目录](https://github.com/PokeAPI/sprites/tree/master/sprites/pokemon/other/official-artwork)。这些素材仅作为本地个人演示资源；Pokémon 角色、名称与相关商标归其权利人所有，公开或商业分发前需自行取得授权。你可直接用有授权的同名 WebP 替换 `themes/*/assets/` 后重新运行 `skin:pack`。
+
+## 验证
 
 ```powershell
 pnpm typecheck
@@ -87,6 +107,4 @@ pnpm test
 pnpm build
 ```
 
-测试集中在少量聚合文件中，覆盖安全归档、不可变主题库、两阶段激活、回退，以及 Host 状态到 Browser `installSkin()` 的数据链。在独立检出本插件时，可把 `DSH_HARNESS_ROOT` 指向包含同步皮肤合同的 Harness 源码；当前联合工作区会自动发现 `reference/deepseek-harness`。
-
-
+聚合测试位于 `tests/skin-data-chain.spec.ts`，覆盖 v1/v2 归档、内置/本地库、两阶段激活、动态组件加载、回退和资源释放。联合工作区默认从 `reference/deepseek-harness` 读取本次 Harness 合同；独立检出时可设置 `DSH_HARNESS_ROOT`。

@@ -1,6 +1,18 @@
 export const SKIN_SCHEMA_VERSION = 1 as const
+export const SKIN_SCHEMA_VERSION_V2 = 2 as const
 export const THEME_PARTS_VERSION = 1 as const
-export const SKIN_CAPABILITIES = ['tokens', 'backdrop', 'component-parts'] as const
+export const SKIN_CAPABILITIES = ['tokens', 'backdrop', 'component-parts', 'component-experience'] as const
+export const SKIN_PLACEMENTS = [
+  'skin.shell.top',
+  'skin.shell.bottom',
+  'skin.shell.floating',
+  'skin.sidebar.brand',
+  'skin.conversation.hero',
+  'skin.composer.decorator',
+] as const
+
+export type SkinPlacement = (typeof SKIN_PLACEMENTS)[number]
+export type SkinSource = 'builtin' | 'local'
 
 export type ThemeTokenName = string
 export type ThemePartId =
@@ -83,9 +95,10 @@ export interface SkinAssetManifest {
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp'
   sha256: string
   bytes: number
+  purpose?: 'backdrop' | 'preview' | 'component'
 }
 
-export interface SkinManifest {
+export interface SkinManifestV1 {
   schemaVersion: typeof SKIN_SCHEMA_VERSION
   id: string
   name: string
@@ -95,12 +108,63 @@ export interface SkinManifest {
   assets: readonly SkinAssetManifest[]
 }
 
+export interface SkinPreviewManifest {
+  light: string
+  dark: string
+}
+
+export interface SkinExperienceManifest {
+  apiVersion: 1
+  moduleId: string
+  entry: 'experience/client.js'
+  sha256: string
+  bytes: number
+  placements: readonly SkinPlacement[]
+}
+
+export interface SkinManifestV2 {
+  schemaVersion: typeof SKIN_SCHEMA_VERSION_V2
+  id: string
+  name: string
+  version: string
+  author?: string
+  description?: string
+  tags?: readonly string[]
+  themePartsVersion: typeof THEME_PARTS_VERSION
+  capabilities: readonly (typeof SKIN_CAPABILITIES)[number][]
+  preview: SkinPreviewManifest
+  assets: readonly SkinAssetManifest[]
+  experience?: SkinExperienceManifest
+}
+
+export type SkinManifest = SkinManifestV1 | SkinManifestV2
+
+export interface SkinExperienceDescriptor {
+  apiVersion: 1
+  moduleId: string
+  url: string
+  rev: string
+  placements: readonly SkinPlacement[]
+  assets: Readonly<Record<string, string>>
+}
+
+export interface SkinPreviewUrls {
+  light: string
+  dark: string
+}
+
 export interface StoredSkinSummary {
   fingerprint: string
   id: string
   name: string
   version: string
   capabilities: readonly string[]
+  source: SkinSource
+  author?: string
+  description?: string
+  tags: readonly string[]
+  preview?: SkinPreviewUrls
+  experience?: SkinExperienceDescriptor
 }
 
 export interface SkinHostState {
@@ -108,6 +172,7 @@ export interface SkinHostState {
   activeFingerprint?: string
   previousConfirmed?: string
   activeLayer?: ThemeLayerDefinition
+  activeExperience?: SkinExperienceDescriptor
   skins: readonly StoredSkinSummary[]
 }
 
@@ -116,12 +181,14 @@ export interface PrepareSkinResult {
   fingerprint?: string
   activationRevision: number
   layer?: ThemeLayerDefinition
+  experience?: SkinExperienceDescriptor
 }
 
 export interface CommitSkinResult {
   fingerprint?: string
   activationRevision: number
   layer?: ThemeLayerDefinition
+  experience?: SkinExperienceDescriptor
 }
 
 export interface ThemePartInspection {

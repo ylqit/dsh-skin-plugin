@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -11,7 +11,7 @@ import { parseSkinArchive } from '../src/host/archive.ts'
 import { registerSkinHttp, type SkinWebServer } from '../src/host/http.ts'
 import { SkinLibrary } from '../src/host/library.ts'
 import { SkinStudioController } from '../src/client/controller.ts'
-import type { ThemeService } from '../src/client/contracts.ts'
+import type { ClientModuleLoader, ThemeService } from '../src/client/contracts.ts'
 import type { SkinHostState, ThemeLayerDefinition } from '../src/shared/contracts.ts'
 
 const roots: string[] = []
@@ -22,10 +22,23 @@ afterEach(async () => {
   while (roots.length > 0) await rm(roots.pop() as string, { recursive: true, force: true })
 })
 
-async function library(): Promise<{ library: SkinLibrary; root: string }> {
+async function library(builtinsRoot?: string): Promise<{ library: SkinLibrary; root: string }> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-skin-plugin-'))
   roots.push(root)
-  return { library: await SkinLibrary.open(join(root, 'skins')), root: join(root, 'skins') }
+  return { library: await SkinLibrary.open(join(root, 'skins'), undefined, builtinsRoot), root: join(root, 'skins') }
+}
+
+function noDynamicModules(): ClientModuleLoader {
+  return { loadDynamic: vi.fn(async () => { throw new Error('unexpected dynamic module load') }) }
+}
+
+function installInstantImages(): void {
+  class InstantImage {
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+    set src(_value: string) { queueMicrotask(() => { this.onload?.() }) }
+  }
+  vi.stubGlobal('Image', InstantImage)
 }
 
 function theme(name: string, asset = false): ThemeLayerDefinition {
@@ -102,7 +115,7 @@ describe('synchronized skin data chain', () => {
       })
     }
     const themeService: ThemeService = {
-      getTheme: () => ({}),
+      getTheme: () => ({ active: { colorScheme: 'light' } }),
       exportInspectTokens: () => [],
       exportInspectParts: () => [],
       setTheme: vi.fn(),
@@ -135,7 +148,8 @@ describe('synchronized skin data chain', () => {
       throw new Error(`unexpected test request ${path}`)
     }))
 
-    const controller = new SkinStudioController(themeService, true)
+    installInstantImages()
+    const controller = new SkinStudioController(themeService, noDynamicModules(), true)
     const dispose = controller.start()
     await vi.waitFor(() => { expect(controller.getSnapshot().host?.activeFingerprint).toBe(first.fingerprint) })
     expect(visible.at(-1)).toMatchObject({ kind: 'active', revision: 1, fingerprint: first.fingerprint })
@@ -171,6 +185,71 @@ describe('synchronized skin data chain', () => {
     expect(warnings).toHaveLength(1)
   })
 
+  it('loads v2 built-ins, promotes one Experience handle, and releases replaced component CSS', async () => {
+    const builtinsRoot = join(process.cwd(), 'builtins')
+    const parsed = await Promise.all([
+      'pikachu-energy.dshskin', 'squirtle-water.dshskin', 'bulbasaur-growth.dshskin',
+    ].map(async name => parseSkinArchive(new Uint8Array(await readFile(join(builtinsRoot, name))))))
+    expect(parsed.map(skin => skin.manifest.schemaVersion)).toEqual([2, 2, 2])
+    expect(parsed.every(skin => skin.preview !== undefined && skin.experience !== undefined)).toBe(true)
+
+    const store = await library(builtinsRoot)
+    const skins = store.library.snapshot().skins
+    expect(skins).toHaveLength(3)
+    expect(skins.every(skin => skin.source === 'builtin')).toBe(true)
+    await expect(store.library.delete(skins[0]!.fingerprint)).rejects.toThrow('built-in skins cannot be deleted')
+
+    const first = skins.find(skin => skin.id === 'pikachu-energy')!
+    const second = skins.find(skin => skin.id === 'squirtle-water')!
+    await store.library.commit(store.library.prepare(first.fingerprint).preparationId)
+
+    const releases: Array<ReturnType<typeof vi.fn>> = []
+    const modules: ClientModuleLoader = {
+      loadDynamic: vi.fn(async row => {
+        const descriptor = store.library.snapshot().skins
+          .map(skin => skin.experience)
+          .find(experience => experience?.moduleId === row.id)
+        if (descriptor === undefined) throw new Error(`unexpected module ${row.id}`)
+        const release = vi.fn()
+        releases.push(release)
+        const components = Object.fromEntries(descriptor.placements.map(placement => [placement, () => null]))
+        return { id: row.id, exports: { apiVersion: 1, components }, release }
+      }),
+    }
+    const themeService: ThemeService = {
+      getTheme: () => ({ active: { colorScheme: 'dark' } }),
+      exportInspectTokens: () => [], exportInspectParts: () => [], setTheme: vi.fn(),
+      installSkin: () => vi.fn(),
+    }
+    vi.stubGlobal('EventSource', undefined)
+    installInstantImages()
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/state')) return envelope(store.library.snapshot())
+      if (path.endsWith('/prepare')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { fingerprint?: string }
+        return envelope(store.library.prepare(body.fingerprint))
+      }
+      if (path.endsWith('/commit')) {
+        const body = JSON.parse(String(init?.body)) as { preparationId: string }
+        return envelope(await store.library.commit(body.preparationId))
+      }
+      throw new Error(`unexpected test request ${path}`)
+    }))
+
+    const controller = new SkinStudioController(themeService, modules, true)
+    const dispose = controller.start()
+    await vi.waitFor(() => { expect(controller.experience.getSnapshot()?.themeId).toBe(first.fingerprint) })
+    expect(controller.experience.getSnapshot()?.mode).toBe('dark')
+    controller.activate(second.fingerprint)
+    await vi.waitFor(() => { expect(controller.experience.getSnapshot()?.themeId).toBe(second.fingerprint) })
+    expect(modules.loadDynamic).toHaveBeenCalledTimes(2)
+    expect(releases[0]).toHaveBeenCalledOnce()
+    expect(releases[1]).not.toHaveBeenCalled()
+    dispose()
+    expect(releases[1]).toHaveBeenCalledOnce()
+  })
+
   it.each([
     ['path traversal', () => archive('Unsafe', { extra: { '../theme.css': strToU8('x') } })],
     ['arbitrary CSS entry', () => archive('Unsafe', { extra: { 'theme.css': strToU8('*{}') } })],
@@ -188,7 +267,10 @@ describe('synchronized skin data chain', () => {
 
     const store = await library()
     let handler: Parameters<SkinWebServer['register']>[0]['handler'] | undefined
-    registerSkinHttp({ register: route => { handler = route.handler; return () => {} } }, store.library)
+    registerSkinHttp({
+      register: route => { handler = route.handler; return () => {} },
+      tapIndex: () => () => {},
+    }, store.library)
     const request = Readable.from([Buffer.from('{}')])
     Object.assign(request, { method: 'POST', url: '/api/dsh-skin/prepare', headers: {} })
     Object.defineProperty(request, 'socket', { value: { remoteAddress: '203.0.113.10' } })
@@ -210,9 +292,9 @@ describe('synchronized skin data chain', () => {
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
     const controller = new SkinStudioController({
-      getTheme: () => ({}), installSkin: () => () => {}, exportInspectTokens: () => [],
+      getTheme: () => ({ active: { colorScheme: 'light' } }), installSkin: () => () => {}, exportInspectTokens: () => [],
       exportInspectParts: () => [], setTheme: () => {},
-    }, false)
+    }, noDynamicModules(), false)
     controller.restoreDefault()
     await vi.waitFor(() => { expect(controller.getSnapshot().error).toContain('Host 本机') })
     expect(fetch).not.toHaveBeenCalled()

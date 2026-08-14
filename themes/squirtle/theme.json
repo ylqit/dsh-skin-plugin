@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "tokens": {
+    "--dsw-alias-bg-base": { "light": "#e8f8ff", "dark": "#071b2b" },
+    "--dsw-alias-bg-layer-1": { "light": "#f5fcff", "dark": "#0c2a40" },
+    "--dsw-alias-bg-layer-2": { "light": "#d9f3ff", "dark": "#123b57" },
+    "--dsw-alias-label-primary": { "light": "#10344d", "dark": "#e6f8ff" },
+    "--dsw-alias-label-secondary": { "light": "#3a647c", "dark": "#9dcbe1" },
+    "--dsw-alias-brand-primary": { "light": "#168ac2", "dark": "#5ac8fa" },
+    "--dsw-alias-border-l1": { "light": "#a9d9ed", "dark": "#205574" },
+    "--dsw-specific-sidebar-fill": { "light": "#d8f2fc", "dark": "#092438" },
+    "--dsw-specific-bubble": { "light": "#bcecff", "dark": "#144962" }
+  },
+  "backdrop": {
+    "light": { "assetUrl": "asset:assets/backdrop-light.webp", "fallbackColor": "#e8f8ff", "focusX": 0.3, "focusY": 0.4, "dim": 0.14, "blurPx": 1 },
+    "dark": { "assetUrl": "asset:assets/backdrop-dark.webp", "fallbackColor": "#071b2b", "focusX": 0.3, "focusY": 0.4, "dim": 0.5, "blurPx": 1 }
+  },
+  "partStyles": [
+    { "part": "primitive.button", "variant": "primary", "style": { "light": { "background": "#168ac2", "foreground": "#ffffff", "borderRadiusPx": 18 }, "dark": { "background": "#5ac8fa", "foreground": "#062034", "borderRadiusPx": 18 } } },
+    { "part": "primitive.input-control", "style": { "light": { "background": "#f5fcff", "borderColor": "#76c5e5", "borderWidthPx": 1, "borderStyle": "solid", "borderRadiusPx": 18 }, "dark": { "background": "#0c2a40", "borderColor": "#2a7096", "borderWidthPx": 1, "borderStyle": "solid", "borderRadiusPx": 18 } } },
+    { "part": "conversation.message", "variant": "assistant", "style": { "light": { "background": "#eefaff", "borderColor": "#b5e2f4", "borderWidthPx": 1, "borderStyle": "solid", "borderRadiusPx": 20 }, "dark": { "background": "#0f3249", "borderColor": "#246080", "borderWidthPx": 1, "borderStyle": "solid", "borderRadiusPx": 20 } } },
+    { "part": "tool.card", "variant": "default", "state": "running", "style": { "light": { "borderColor": "#168ac2", "borderWidthPx": 2, "borderStyle": "solid", "borderRadiusPx": 18 }, "dark": { "borderColor": "#5ac8fa", "borderWidthPx": 2, "borderStyle": "solid", "borderRadiusPx": 18 } } }
+  ]
+}

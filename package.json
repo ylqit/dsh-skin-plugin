@@ -5,6 +5,9 @@
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
+  "bin": {
+    "dsh-skin": "lib/cli.js"
+  },
   "exports": {
     ".": "./lib/index.js",
     "./invariant": "./lib/invariant.js",
@@ -14,8 +17,10 @@
   },
   "files": [
     "lib",
+    "builtins",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "templates"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -27,6 +32,7 @@
     },
     "client": {
       "inject": [
+        "@deepseek-ai/dsh-client-modules",
         "@deepseek-ai/dsh-client-connection",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-theme"
@@ -37,31 +43,38 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsdown",
+    "skin:create": "node lib/cli.js create",
+    "skin:pack": "node lib/cli.js pack",
     "test": "vitest run",
     "check": "pnpm typecheck && pnpm test && pnpm build"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.1 <5",
     "@deepseek-ai/dsh-client-connection": ">=0.1.0-rc.5 <0.2",
+    "@deepseek-ai/dsh-client-modules": ">=0.1.0-rc.5 <0.2",
     "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.0-rc.5 <0.2",
     "@deepseek-ai/dsh-client-ui-settings": ">=0.1.0-rc.5 <0.2",
     "@deepseek-ai/dsh-client-ui-theme": ">=0.1.0-rc.5 <0.2",
     "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.5 <0.2",
     "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.5 <0.2",
-    "react": ">=18.2.0 <20"
+    "react": ">=18.2.0 <20",
+    "react-dom": ">=18.2.0 <20"
   },
   "dependencies": {
-    "fflate": "^0.8.2"
+    "fflate": "^0.8.2",
+    "lightningcss": "^1.32.0",
+    "tsdown": "^0.22.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-modules": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-invariants": "^0.1.0-rc.6",
     "@types/node": "^24.0.0",
     "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.1",
     "jsdom": "^29.1.1",
-    "lightningcss": "^1.32.0",
     "react": "^18.3.1",
-    "tsdown": "^0.22.2",
+    "react-dom": "^18.3.1",
     "typescript": "~5.7.2",
     "vitest": "^4.1.8"
   }

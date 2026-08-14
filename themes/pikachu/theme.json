@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "tokens": {
+    "--dsw-alias-bg-base": { "light": "#fff9d9", "dark": "#17160d" },
+    "--dsw-alias-bg-layer-1": { "light": "#fffdf0", "dark": "#262311" },
+    "--dsw-alias-bg-layer-2": { "light": "#fff3ad", "dark": "#353016" },
+    "--dsw-alias-label-primary": { "light": "#342d12", "dark": "#fff7c2" },
+    "--dsw-alias-label-secondary": { "light": "#655a24", "dark": "#d9cc79" },
+    "--dsw-alias-brand-primary": { "light": "#f0b900", "dark": "#ffd83d" },
+    "--dsw-alias-border-l1": { "light": "#ead778", "dark": "#5b5120" },
+    "--dsw-specific-sidebar-fill": { "light": "#fff0a0", "dark": "#211f10" },
+    "--dsw-specific-bubble": { "light": "#ffe66a", "dark": "#58490d" }
+  },
+  "backdrop": {
+    "light": { "assetUrl": "asset:assets/backdrop-light.webp", "fallbackColor": "#fff9d9", "focusX": 0.72, "focusY": 0.32, "dim": 0.16, "blurPx": 0 },
+    "dark": { "assetUrl": "asset:assets/backdrop-dark.webp", "fallbackColor": "#17160d", "focusX": 0.72, "focusY": 0.32, "dim": 0.46, "blurPx": 0 }
+  },
+  "partStyles": [
+    { "part": "primitive.button", "variant": "primary", "style": { "light": { "background": { "token": "--dsw-alias-brand-primary" }, "foreground": "#2c2400", "borderRadiusPx": 16 }, "dark": { "background": { "token": "--dsw-alias-brand-primary" }, "foreground": "#211900", "borderRadiusPx": 16 } } },
+    { "part": "conversation.composer", "style": { "light": { "background": "#fffdf0", "borderColor": "#e8c63c", "borderWidthPx": 1, "borderStyle": "solid", "borderRadiusPx": 22, "shadows": [{ "xPx": 0, "yPx": 8, "blurPx": 24, "spreadPx": 0, "color": "#c78d0033" }] }, "dark": { "background": "#262311", "borderColor": "#816d19", "borderWidthPx": 1, "borderStyle": "solid", "borderRadiusPx": 22, "shadows": [{ "xPx": 0, "yPx": 8, "blurPx": 24, "spreadPx": 0, "color": "#00000055" }] } } },
+    { "part": "conversation.message", "variant": "user", "style": { "light": { "background": "#ffe76b", "borderRadiusPx": 20 }, "dark": { "background": "#57490e", "borderRadiusPx": 20 } } },
+    { "part": "primitive.dialog-surface", "style": { "light": { "borderColor": "#e8c63c", "borderWidthPx": 1, "borderStyle": "solid", "borderRadiusPx": 24 }, "dark": { "borderColor": "#816d19", "borderWidthPx": 1, "borderStyle": "solid", "borderRadiusPx": 24 } } }
+  ]
+}

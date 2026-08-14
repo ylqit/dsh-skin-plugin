@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "tokens": {
+    "--dsw-alias-brand-primary": {
+      "light": "#315efb",
+      "dark": "#8ba6ff"
+    }
+  },
+  "backdrop": {
+    "light": {
+      "assetUrl": "asset:assets/backdrop-light.webp",
+      "fallbackColor": "#edf3ff",
+      "focusX": 0.5,
+      "focusY": 0.5,
+      "dim": 0.08,
+      "blurPx": 0
+    },
+    "dark": {
+      "assetUrl": "asset:assets/backdrop-dark.webp",
+      "fallbackColor": "#0c1429",
+      "focusX": 0.5,
+      "focusY": 0.5,
+      "dim": 0.32,
+      "blurPx": 0
+    }
+  },
+  "partStyles": [
+    {
+      "part": "primitive.button",
+      "variant": "primary",
+      "style": {
+        "light": { "borderRadiusPx": 14 },
+        "dark": { "borderRadiusPx": 14 }
+      }
+    }
+  ]
+}

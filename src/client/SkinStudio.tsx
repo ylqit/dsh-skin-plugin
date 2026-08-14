@@ -19,7 +19,7 @@ const EDITABLE_PART_FIELDS: readonly (keyof ThemePartStyle)[] = [
 export function SkinStudio(props: SkinStudioProps): ReactNode {
   const state = props.useStudio(value => value)
   const importRef = useRef<HTMLInputElement>(null)
-  const backdropRef = useRef<HTMLInputElement>(null)
+  const [galleryMode, setGalleryMode] = useState<'light' | 'dark'>('light')
   const [part, setPart] = useState<string>(state.parts[0]?.id ?? 'primitive.button')
   const partInfo = state.parts.find(value => value.id === part)
   const [variant, setVariant] = useState('')
@@ -87,29 +87,55 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
       <section className={css.library} aria-labelledby="skin-library-heading">
         <div className={css.sectionHeading}>
           <h3 id="skin-library-heading">已安装皮肤</h3>
-          <span>激活 revision {state.host?.activationRevision ?? '—'}</span>
+          <div className={css.modeActions}>
+            <Button variant="ghost" size="sm" onClick={() => { setGalleryMode('light') }}>Light 卡片</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setGalleryMode('dark') }}>Dark 卡片</Button>
+            <span>激活 revision {state.host?.activationRevision ?? '—'}</span>
+          </div>
         </div>
         {(state.host?.skins.length ?? 0) === 0
           ? <div className={css.empty}>还没有导入皮肤。你可以从下方草稿开始创建。</div>
           : (
-            <div className={css.skinGrid}>
-              {state.host?.skins.map((skin) => {
-                const active = skin.fingerprint === state.host?.activeFingerprint
+            <div className={css.libraryGroups}>
+              {(['builtin', 'local'] as const).map((source) => {
+                const skins = state.host?.skins.filter(skin => skin.source === source) ?? []
+                if (skins.length === 0) return null
                 return (
-                  <article key={skin.fingerprint} className={css.skinCard} data-active={active || undefined}>
-                    <div className={css.skinCardHeader}>
-                      <div><strong>{skin.name}</strong><span>v{skin.version}</span></div>
-                      {active && <span className={css.activeBadge}>当前</span>}
+                  <section key={source} className={css.libraryGroup}>
+                    <h4>{source === 'builtin' ? '内置主题' : '本地主题'}</h4>
+                    <div className={css.skinGrid}>
+                      {skins.map((skin) => {
+                        const active = skin.fingerprint === state.host?.activeFingerprint
+                        const preview = skin.preview?.[galleryMode]
+                        return (
+                          <article key={skin.fingerprint} className={css.skinCard} data-active={active || undefined}>
+                            {preview !== undefined && <img className={css.skinPreview} src={preview} alt={`${skin.name} ${galleryMode} 预览`} />}
+                            <div className={css.skinCardBody}>
+                              <div className={css.skinCardHeader}>
+                                <div><strong>{skin.name}</strong><span>v{skin.version}{skin.author === undefined ? '' : ` · ${skin.author}`}</span></div>
+                                {active && <span className={css.activeBadge}>当前</span>}
+                              </div>
+                              {skin.description !== undefined && <p className={css.skinDescription}>{skin.description}</p>}
+                              <div className={css.capabilities}>
+                                {skin.capabilities.map(value => <span key={value}>{value}</span>)}
+                              </div>
+                              {skin.experience !== undefined && (
+                                <p className={css.placements}>组件位置：{skin.experience.placements.join('、')}</p>
+                              )}
+                              <code>{skin.fingerprint.slice(0, 12)}</code>
+                              <div className={css.cardActions}>
+                                <Button variant="ghost" size="sm" disabled={!state.localManagement || state.busy} onClick={() => { props.beginDraft(skin.fingerprint) }}>编辑与试穿</Button>
+                                {!active && <Button variant="primary" size="sm" disabled={manageDisabled} onClick={() => { props.activate(skin.fingerprint) }}>激活</Button>}
+                                {!active && skin.source === 'local' && skin.fingerprint !== state.host?.previousConfirmed && (
+                                  <Button variant="ghost" size="sm" disabled={manageDisabled} onClick={() => { props.deleteSkin(skin.fingerprint) }}>删除</Button>
+                                )}
+                              </div>
+                            </div>
+                          </article>
+                        )
+                      })}
                     </div>
-                    <code>{skin.fingerprint.slice(0, 12)}</code>
-                    <div className={css.cardActions}>
-                      <Button variant="ghost" size="sm" disabled={!state.localManagement || state.busy} onClick={() => { props.beginDraft(skin.fingerprint) }}>编辑与试穿</Button>
-                      {!active && <Button variant="primary" size="sm" disabled={manageDisabled} onClick={() => { props.activate(skin.fingerprint) }}>激活</Button>}
-                      {!active && skin.fingerprint !== state.host?.previousConfirmed && (
-                        <Button variant="ghost" size="sm" disabled={manageDisabled} onClick={() => { props.deleteSkin(skin.fingerprint) }}>删除</Button>
-                      )}
-                    </div>
-                  </article>
+                  </section>
                 )
               })}
             </div>
@@ -151,15 +177,26 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
 
         <section className={css.editorPanel}>
           <h3>背景焦点与遮罩</h3>
-          <label className={css.fieldLabel}>背景图片
+          <label className={css.fieldLabel}>Light 背景 / 卡片封面
             <input
-              ref={backdropRef}
               type="file"
               accept="image/png,image/jpeg,image/webp"
               disabled={!state.localManagement}
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0]
-                if (file !== undefined) props.updateBackdropImage(file)
+                if (file !== undefined) props.updateBackdropImage('light', file)
+                event.currentTarget.value = ''
+              }}
+            />
+          </label>
+          <label className={css.fieldLabel}>Dark 背景 / 卡片封面
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              disabled={!state.localManagement}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                if (file !== undefined) props.updateBackdropImage('dark', file)
                 event.currentTarget.value = ''
               }}
             />

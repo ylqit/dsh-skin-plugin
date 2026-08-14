@@ -1,0 +1,9 @@
+@layer dsh-active-theme {
+  .pressure { display:flex; align-items:center; justify-content:center; gap:12px; min-height:32px; color:#e9fbff; background:linear-gradient(90deg,#07517a,#21a8dc 48%,#07517a); border-top:2px solid #9ee9ff; box-shadow:0 -3px 14px #057bac33;font-size:10px;letter-spacing:.7px }
+  .pressure strong{padding:3px 8px;border-radius:999px;background:#001e342e;font-size:9px}.gauge{display:flex;gap:3px}.gauge i{width:20px;height:6px;border-radius:999px;background:#b7f1ff;box-shadow:0 0 8px #8ee2ff}
+  .ball{width:16px;height:16px;border:2px solid #e9fbff;border-radius:50%;background:linear-gradient(#ed5146 0 44%,#e9fbff 45% 55%,#f8fdff 56%);box-shadow:0 0 0 2px #073b5c}.ball:after{content:"";display:block;width:5px;height:5px;margin:4px;border-radius:50%;background:#073b5c}
+  .bubbles { position:fixed; right:24px; bottom:86px; width:72px; height:96px; pointer-events:none; }
+  .bubbles i { position:absolute; border:2px solid #71d8ff; border-radius:50%; background:linear-gradient(145deg,#ffffff70,#4cc9ff22); box-shadow:inset 2px 2px 7px #ffffff99,0 5px 20px #087caf55; }
+  .bubbles i:nth-child(1){right:4px;bottom:2px;width:34px;height:34px}.bubbles i:nth-child(2){left:8px;bottom:40px;width:22px;height:22px}.bubbles i:nth-child(3){right:18px;top:2px;width:14px;height:14px}
+  @media (prefers-reduced-motion: reduce) { .pressure,.bubbles { transition:none; } }
+}
