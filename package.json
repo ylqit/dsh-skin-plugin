@@ -1,6 +1,6 @@
 {
   "name": "@ylq77147/dsh-skin-plugin",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Safe synchronized component skins and a visual theme studio for DeepSeek Harness WebUI",
   "author": "ylq77147",
   "license": "MIT",

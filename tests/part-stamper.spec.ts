@@ -4,11 +4,12 @@ import { startPartStamper } from '../src/client/part-stamper.ts'
 
 const PART = 'data-dsh-theme-part'
 
-/** Minimal official-shell fixture: frame grid + three columns + composer + controls. */
+/** Minimal official-shell fixture: app-root wrapper + frame grid + three columns + composer + controls. */
 function buildShellFixture(): void {
   document.body.innerHTML = ''
   const root = document.createElement('div')
   root.id = 'root'
+  const wrapper = document.createElement('div')
   const frame = document.createElement('div')
   frame.style.gridTemplateColumns = '256px minmax(0, 1fr) 0px'
   const sidebar = document.createElement('div')
@@ -26,9 +27,12 @@ function buildShellFixture(): void {
   const standaloneButton = document.createElement('button')
   center.append(standaloneButton)
   frame.append(sidebar, center, details, overlay)
-  root.append(frame)
+  wrapper.append(frame)
+  root.append(wrapper)
   document.body.append(root)
 }
+
+const tick = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
 
 let dispose: (() => void) | undefined
 afterEach(() => {
@@ -88,5 +92,43 @@ describe('part anchor shim', () => {
     expect(document.querySelectorAll('button').length).toBeGreaterThan(0)
     expect(root?.style.position).toBe('')
     expect(root?.style.zIndex).toBe('')
+  })
+
+  it('clears the opaque shell surfaces while a backdrop is active and restores them after', async () => {
+    buildShellFixture()
+    const wrapper = document.querySelector<HTMLElement>('#root > *') as HTMLElement
+    const frame = document.querySelector<HTMLElement>('[data-shell-overlay]')?.parentElement as HTMLElement
+    wrapper.style.background = 'var(--dsw-alias-bg-base)'
+    frame.style.background = 'var(--dsw-alias-bg-base)'
+    dispose = startPartStamper()
+    await tick()
+
+    // No backdrop flag yet: surfaces keep their own background.
+    expect(wrapper.style.background).toBe('var(--dsw-alias-bg-base)')
+    expect(frame.style.background).toBe('var(--dsw-alias-bg-base)')
+
+    document.body.setAttribute('data-dsh-skin-backdrop', '1')
+    await tick(20)
+    expect(wrapper.style.background).toBe('transparent')
+    expect(frame.style.background).toBe('transparent')
+
+    document.body.removeAttribute('data-dsh-skin-backdrop')
+    await tick(20)
+    expect(wrapper.style.background).toBe('var(--dsw-alias-bg-base)')
+    expect(frame.style.background).toBe('var(--dsw-alias-bg-base)')
+  })
+
+  it('restores surface backgrounds on dispose while a backdrop is active', async () => {
+    buildShellFixture()
+    const wrapper = document.querySelector<HTMLElement>('#root > *') as HTMLElement
+    wrapper.style.background = 'var(--dsw-alias-bg-base)'
+    document.body.setAttribute('data-dsh-skin-backdrop', '1')
+    dispose = startPartStamper()
+    await tick()
+    expect(wrapper.style.background).toBe('transparent')
+    dispose()
+    dispose = undefined
+    expect(wrapper.style.background).toBe('var(--dsw-alias-bg-base)')
+    expect(document.body.hasAttribute('data-dsh-skin-backdrop')).toBe(true) // flag owned by presenter, not shim
   })
 })

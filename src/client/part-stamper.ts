@@ -13,7 +13,12 @@ const SHIM_OWNED = 'data-dsh-skin-shim'
 
 interface StampedRegistry {
   elements: Set<HTMLElement>
+  /** Opaque shell surfaces cleared while a backdrop is active, to their previous inline background. */
+  surfaces: Map<HTMLElement, string>
 }
+
+/** Body flag the presenter sets while the active layer carries a backdrop. */
+const BACKDROP_FLAG = 'data-dsh-skin-backdrop'
 
 /** Mount element of the official web shell (`createRoot(el)` on `#root`). */
 const ROOT_SELECTOR = '#root'
@@ -27,7 +32,7 @@ const OVERLAY_SELECTOR = '[data-shell-overlay]'
  */
 export function startPartStamper(): () => void {
   if (typeof document === 'undefined' || document.body === null) return () => {}
-  const registry: StampedRegistry = { elements: new Set() }
+  const registry: StampedRegistry = { elements: new Set(), surfaces: new Map() }
   const backdrop = document.createElement('div')
   backdrop.setAttribute(SHIM_OWNED, 'backdrop')
   backdrop.setAttribute(PART, 'shell.backdrop')
@@ -51,7 +56,12 @@ export function startPartStamper(): () => void {
   const observer = new MutationObserver(() => {
     schedule(registry)
   })
-  observer.observe(document.body, { childList: true, subtree: true })
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: [BACKDROP_FLAG],
+  })
   let scheduled = false
   function schedule(registryValue: StampedRegistry): void {
     if (scheduled) return
@@ -75,6 +85,7 @@ export function startPartStamper(): () => void {
       if (element.hasAttribute(PART)) element.removeAttribute(PART)
     }
     registry.elements.clear()
+    restoreSurfaces(registry)
   }
 }
 
@@ -112,6 +123,50 @@ function sweep(registry: StampedRegistry): void {
   for (const button of document.querySelectorAll('button')) stamp(button, 'primitive.button')
   for (const input of document.querySelectorAll('input, textarea')) stamp(input, 'primitive.input')
   for (const dialog of document.querySelectorAll('[role="dialog"]')) stamp(dialog, 'primitive.dialog-surface')
+
+  syncBackdropSurfaces(registry)
+}
+
+/**
+ * While a backdrop is active, clear the opaque shell surfaces covering the
+ * fixed backdrop layer (the AppRoot wrapper and the AppFrame grid). Inline
+ * styles are required: the official harness paints those surfaces with
+ * unlayered CSS, which beats any layered rule the plugin could ship.
+ */
+function syncBackdropSurfaces(registry: StampedRegistry): void {
+  const surfaces: HTMLElement[] = []
+  const root = document.querySelector(ROOT_SELECTOR)
+  if (root?.firstElementChild instanceof HTMLElement) surfaces.push(root.firstElementChild)
+  const overlay = document.querySelector(OVERLAY_SELECTOR)
+  if (overlay?.parentElement instanceof HTMLElement) surfaces.push(overlay.parentElement)
+  if (!document.body.hasAttribute(BACKDROP_FLAG)) {
+    restoreSurfaces(registry)
+    return
+  }
+  const live = new Set(surfaces)
+  for (const [element, previous] of [...registry.surfaces]) {
+    if (!live.has(element)) {
+      restoreSurface(element, previous)
+      registry.surfaces.delete(element)
+    }
+  }
+  for (const element of surfaces) {
+    if (!registry.surfaces.has(element)) {
+      registry.surfaces.set(element, element.style.background)
+      element.style.background = 'transparent'
+    }
+  }
+}
+
+/** Retract every inline background write, newest surface set first. */
+function restoreSurfaces(registry: StampedRegistry): void {
+  for (const [element, previous] of registry.surfaces) restoreSurface(element, previous)
+  registry.surfaces.clear()
+}
+
+function restoreSurface(element: HTMLElement, previous: string): void {
+  if (previous === '') element.style.removeProperty('background')
+  else element.style.background = previous
 }
 
 /** Composer: nearest textarea ancestor that also carries a toolbar button. */

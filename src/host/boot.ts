@@ -43,11 +43,17 @@ export function createSkinBootInjector(readActive: () => SkinBootSource | undefi
     let output = headClose === null
       ? `${html}${style}`
       : `${html.slice(0, headClose.index)}${style}${html.slice(headClose.index)}`
+    // The part-anchor shim needs the backdrop flag before plugins load, so the
+    // opaque shell surfaces clear across the pre-plugin interval too.
+    const backdropLine = active.layer.backdrop === undefined
+      ? 'delete body.dataset.dshSkinBackdrop'
+      : 'body.dataset.dshSkinBackdrop = "1"'
     const script = `<script>(() => {
   const body = document.body
   if (body === null) return
   body.dataset.dshSkinActive = ${JSON.stringify(active.contentFingerprint)}
   body.dataset.dshSkinRevision = ${JSON.stringify(String(active.activationRevision))}
+  ${backdropLine}
 })()</script>`
     const bodyOpen = BODY_OPEN.exec(output)
     output = bodyOpen === null

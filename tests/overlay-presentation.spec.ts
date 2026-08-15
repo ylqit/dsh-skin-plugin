@@ -11,6 +11,16 @@ function layer(color: string): ThemeLayerDefinition {
   }
 }
 
+function layerWithBackdrop(color: string): ThemeLayerDefinition {
+  return {
+    ...layer(color),
+    backdrop: {
+      light: { fallbackColor: color, focusX: 0.5, focusY: 0.5, dim: 0.1, blurPx: 0 },
+      dark: { fallbackColor: '#0b1020', focusX: 0.5, focusY: 0.5, dim: 0.4, blurPx: 0 },
+    },
+  }
+}
+
 function activeStyle(): HTMLStyleElement | null {
   return document.querySelector('style[data-dsh-skin="active"]')
 }
@@ -39,6 +49,17 @@ describe('overlay presentation', () => {
     active.dispose() // idempotent
     expect(activeStyle()).toBeNull()
     expect(document.body.dataset.dshSkinActive).toBeUndefined()
+  })
+
+  it('flags the body while an active lane carries a backdrop and clears it on dispose', () => {
+    const plain = presentSkinLayer({ kind: 'active', layer: layer('#f4f7fb'), fingerprint: 'e'.repeat(64) })
+    expect(document.body.dataset.dshSkinBackdrop).toBeUndefined()
+    plain.dispose()
+
+    const withBackdrop = presentSkinLayer({ kind: 'active', layer: layerWithBackdrop('#f4f7fb'), fingerprint: 'f'.repeat(64) })
+    expect(document.body.dataset.dshSkinBackdrop).toBe('1')
+    withBackdrop.dispose()
+    expect(document.body.dataset.dshSkinBackdrop).toBeUndefined()
   })
 
   it('adopts the host first-paint style instead of doubling its CSS', () => {
