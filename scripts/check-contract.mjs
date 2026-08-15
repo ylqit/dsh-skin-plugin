@@ -3,8 +3,12 @@
  * contract at runtime. Fails when any source or build artifact references
  * `@deepseek-ai/dsh-client-ui-theme`, then smoke-imports the built host entry
  * so missing/stale exports fail `pnpm check` instead of a user's boot.
+ * Also fails when the browser client bundle hoists a require of any Node
+ * builtin (e.g. fflate's node export condition pulling `module`): the dsh
+ * client module table can only resolve platform seeds and client entries.
  */
 
+import { builtinModules } from 'node:module'
 import { readFile, readdir } from 'node:fs/promises'
 import { extname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -38,6 +42,16 @@ if (violations.length > 0) {
   process.exit(1)
 }
 
+const clientBundle = await readFile(resolve(ROOT, 'lib', 'client.js'), 'utf8')
+const builtins = new Set(builtinModules)
+const nodeRequires = [...clientBundle.matchAll(/require\("([^"]+)"\)/g)]
+  .map(match => match[1])
+  .filter(id => builtins.has(id) || id.startsWith('node:'))
+if (nodeRequires.length > 0) {
+  console.error(`contract gate: lib/client.js requires Node builtins ${[...new Set(nodeRequires)].join(', ')} — the dsh client module table cannot resolve them`)
+  process.exit(1)
+}
+
 const entry = resolve(ROOT, 'lib', 'index.js')
 await import(pathToFileURL(entry).href)
-console.log('contract gate: no theme-package references; lib/index.js imports cleanly')
+console.log('contract gate: no theme-package references; no Node builtins in client bundle; lib/index.js imports cleanly')

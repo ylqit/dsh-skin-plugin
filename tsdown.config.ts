@@ -32,6 +32,10 @@ const client: UserConfig = {
   outDir: 'lib',
   format: 'cjs',
   platform: 'browser',
+  // Force the browser-safe fflate entry: its node export condition ships a
+  // createRequire worker shim that hoists require("module") into the bundle,
+  // which the dsh client module table cannot resolve at runtime.
+  alias: { fflate: 'fflate/browser' },
   target: 'es2022',
   dts: false,
   sourcemap: true,
