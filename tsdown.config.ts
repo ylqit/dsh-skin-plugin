@@ -1,7 +1,7 @@
 import type { UserConfig } from 'tsdown'
 import { clientCssModules } from './build/css-modules.ts'
 
-const ID = '@deepseek-ai/dsh-skin-plugin'
+const ID = '@ylq77147/dsh-skin-plugin'
 const PLATFORM = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
   '@deepseek-ai/dsh-client-ui-slots', '@deepseek-ai/dsh-client-web-react',

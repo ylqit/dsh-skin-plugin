@@ -4,12 +4,14 @@ DeepSeek Harness WebUI 的换肤插件。通过导入 `.dshskin` 主题包，一
 
 ## 快速开始
 
+在已安装 dsh 的环境中执行：
+
 ```powershell
-pnpm install
-pnpm build
-dsh plugin --profile web add <插件目录>
+dsh plugin --profile web add @ylq77147/dsh-skin-plugin
 dsh --profile web
 ```
+
+插件必须安装进 dsh profile（其 peer 依赖由 profile 树统一提供），不要单独安装到普通项目中。从 git clone 安装见下文「从源码安装」；移除插件见「卸载插件」。
 
 启动后打开“设置 → 外观主题”：
 
@@ -88,6 +90,39 @@ pnpm skin:pack <主题目录>
 内置皮卡丘（电）、杰尼龟（水）、妙蛙种子（草/毒）三个主题，各自包含对应属性的配色、背景与装饰组件。
 
 Light/Dark 场景图由图像生成工具创建，角色透明图来自 [PokeAPI sprites 的 official-artwork 目录](https://github.com/PokeAPI/sprites/tree/master/sprites/pokemon/other/official-artwork)。这些素材仅作为本地个人演示资源；Pokémon 角色、名称与相关商标归其权利人所有，公开或商业分发前需自行取得授权。你可以用有授权的图像替换 `themes/*/assets/` 后重新运行 `skin:pack`。
+
+## 从源码安装（git clone）
+
+Git 仓库不包含构建产物，克隆后需要先构建，再把插件目录链接进 profile：
+
+```powershell
+git clone https://github.com/ylqit/dsh-skin-plugin.git
+cd dsh-skin-plugin
+pnpm install
+pnpm build
+dsh plugin --profile web add .
+dsh --profile web
+```
+
+修改源码后重新运行 `pnpm build` 并重启 dsh 即可生效，无需重新安装。
+
+## 卸载插件
+
+```powershell
+dsh plugin --profile web remove @ylq77147/dsh-skin-plugin
+```
+
+该命令对 registry、tarball 与 git clone 三种安装方式通用。卸载只移除插件本身，`$DSH_HOME/skins` 中已导入的主题会保留；如需彻底清理，手动删除该目录。
+
+## 发布
+
+发布到 npm 的手工流程：
+
+1. 更新 `package.json` 中的 `version`。
+2. 运行 `pnpm check`（类型检查、测试、构建与合同校验）。
+3. 运行 `pnpm pack` 检查 tarball 内容（应包含 `lib/`、`builtins/`、`templates/`、`src/`、`cordis.patch.yml`），确认后删除临时 `.tgz`。
+4. 运行 `pnpm publish` 发布到 npmjs（`publishConfig.access` 已设为 public；发布目标是 `registry.npmjs.org`，不是下载用的镜像源）。
+5. 提交变更并打 tag（`v<version>`）后推送。
 
 ## 开发与验证
 

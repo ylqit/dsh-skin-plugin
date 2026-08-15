@@ -14,7 +14,7 @@ import type { StudioSnapshot, ThemeService } from './contracts.ts'
 import { presentSkinLayer } from './present.ts'
 
 const API = '/api/dsh-skin'
-const PREVIEW_SOURCE = '@deepseek-ai/dsh-skin-plugin/preview'
+const PREVIEW_SOURCE = '@ylq77147/dsh-skin-plugin/preview'
 const EMPTY_BACKDROP: ThemeBackdropMode = {
   fallbackColor: '#f5f7fb', focusX: 0.5, focusY: 0.5, dim: 0.12, blurPx: 0,
 }

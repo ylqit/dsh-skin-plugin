@@ -1,8 +1,20 @@
 {
-  "name": "@deepseek-ai/dsh-skin-plugin",
+  "name": "@ylq77147/dsh-skin-plugin",
   "version": "0.2.0",
   "description": "Safe synchronized component skins and a visual theme studio for DeepSeek Harness WebUI",
+  "author": "ylq77147",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ylqit/dsh-skin-plugin.git"
+  },
+  "homepage": "https://github.com/ylqit/dsh-skin-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/ylqit/dsh-skin-plugin/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "lib/index.js",
   "bin": {
@@ -20,6 +32,7 @@
     "builtins",
     "cordis.patch.yml",
     "README.md",
+    "src",
     "templates"
   ],
   "engines": {
@@ -44,7 +57,8 @@
     "skin:create": "node lib/cli.js create",
     "skin:pack": "node lib/cli.js pack",
     "test": "vitest run",
-    "check": "pnpm typecheck && pnpm test && pnpm build && node scripts/check-contract.mjs"
+    "check": "pnpm typecheck && pnpm test && pnpm build && node scripts/check-contract.mjs",
+    "prepublishOnly": "pnpm check"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.1 <5",
