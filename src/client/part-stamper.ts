@@ -138,7 +138,15 @@ function syncBackdropSurfaces(registry: StampedRegistry): void {
   const root = document.querySelector(ROOT_SELECTOR)
   if (root?.firstElementChild instanceof HTMLElement) surfaces.push(root.firstElementChild)
   const overlay = document.querySelector(OVERLAY_SELECTOR)
-  if (overlay?.parentElement instanceof HTMLElement) surfaces.push(overlay.parentElement)
+  const frame = overlay?.parentElement
+  if (frame instanceof HTMLElement) {
+    surfaces.push(frame)
+    // Content surfaces painted opaque below the frame (conversation/details
+    // view roots). data-slot is the stable slots-framework marker.
+    for (const slot of frame.querySelectorAll('[data-slot="conversation"], [data-slot="details"]')) {
+      if (slot.firstElementChild instanceof HTMLElement) surfaces.push(slot.firstElementChild)
+    }
+  }
   if (!document.body.hasAttribute(BACKDROP_FLAG)) {
     restoreSurfaces(registry)
     return

@@ -11,7 +11,7 @@ import {
 } from '../shared/contracts.ts'
 import { THEME_PART_CATALOG, THEME_TOKEN_NAMES } from '../shared/theme-layer.ts'
 import type { StudioSnapshot, ThemeService } from './contracts.ts'
-import { presentSkinLayer } from './present.ts'
+import { presentSkinLayer, syncBackdropFlag } from './present.ts'
 
 const API = '/api/dsh-skin'
 const PREVIEW_SOURCE = '@ylq77147/dsh-skin-plugin/preview'
@@ -331,6 +331,9 @@ export class SkinStudioController {
     })
     this.releaseLane(oldActive)
     if (oldPreview !== undefined) this.releaseLane(oldPreview)
+    // Last writer wins, keyed to the committed layer: lane dispose no longer
+    // touches the flag, so activation applies the new backdrop without reload.
+    syncBackdropFlag(committed.layer)
   }
 
   private async installPreparedPreview(prepared: PrepareSkinResult): Promise<void> {

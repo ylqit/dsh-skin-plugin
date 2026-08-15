@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import { createSkinBootInjector } from '../src/host/boot.ts'
-import { presentSkinLayer } from '../src/client/present.ts'
+import { presentSkinLayer, syncBackdropFlag } from '../src/client/present.ts'
 import type { ThemeLayerDefinition } from '../src/shared/contracts.ts'
 import { compileThemeLayerCss } from '../src/shared/theme-layer.ts'
 
@@ -51,14 +51,15 @@ describe('overlay presentation', () => {
     expect(document.body.dataset.dshSkinActive).toBeUndefined()
   })
 
-  it('flags the body while an active lane carries a backdrop and clears it on dispose', () => {
-    const plain = presentSkinLayer({ kind: 'active', layer: layer('#f4f7fb'), fingerprint: 'e'.repeat(64) })
-    expect(document.body.dataset.dshSkinBackdrop).toBeUndefined()
-    plain.dispose()
-
-    const withBackdrop = presentSkinLayer({ kind: 'active', layer: layerWithBackdrop('#f4f7fb'), fingerprint: 'f'.repeat(64) })
+  it('syncBackdropFlag follows the committed layer regardless of lane dispose order', () => {
+    syncBackdropFlag(layerWithBackdrop('#f4f7fb'))
     expect(document.body.dataset.dshSkinBackdrop).toBe('1')
-    withBackdrop.dispose()
+    // Activation swap: the outgoing lane no longer clears the flag.
+    syncBackdropFlag(layerWithBackdrop('#fff9d9'))
+    expect(document.body.dataset.dshSkinBackdrop).toBe('1')
+    syncBackdropFlag(layer('#f4f7fb'))
+    expect(document.body.dataset.dshSkinBackdrop).toBeUndefined()
+    syncBackdropFlag(undefined)
     expect(document.body.dataset.dshSkinBackdrop).toBeUndefined()
   })
 

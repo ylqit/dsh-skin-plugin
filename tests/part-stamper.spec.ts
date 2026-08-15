@@ -17,13 +17,17 @@ function buildShellFixture(): void {
   const details = document.createElement('div')
   const overlay = document.createElement('div')
   overlay.setAttribute('data-shell-overlay', '')
+  const conversationSlot = document.createElement('div')
+  conversationSlot.setAttribute('data-slot', 'conversation')
+  conversationSlot.style.display = 'contents'
   const conversation = document.createElement('div')
   const composer = document.createElement('div')
   const textarea = document.createElement('textarea')
   const toolbarButton = document.createElement('button')
   composer.append(textarea, toolbarButton)
   conversation.append(composer)
-  center.append(conversation)
+  conversationSlot.append(conversation)
+  center.append(conversationSlot)
   const standaloneButton = document.createElement('button')
   center.append(standaloneButton)
   frame.append(sidebar, center, details, overlay)
@@ -98,24 +102,29 @@ describe('part anchor shim', () => {
     buildShellFixture()
     const wrapper = document.querySelector<HTMLElement>('#root > *') as HTMLElement
     const frame = document.querySelector<HTMLElement>('[data-shell-overlay]')?.parentElement as HTMLElement
+    const conversationRoot = document.querySelector<HTMLElement>('[data-slot="conversation"] > *') as HTMLElement
     wrapper.style.background = 'var(--dsw-alias-bg-base)'
     frame.style.background = 'var(--dsw-alias-bg-base)'
+    conversationRoot.style.background = 'var(--dsw-alias-bg-base)'
     dispose = startPartStamper()
     await tick()
 
     // No backdrop flag yet: surfaces keep their own background.
     expect(wrapper.style.background).toBe('var(--dsw-alias-bg-base)')
     expect(frame.style.background).toBe('var(--dsw-alias-bg-base)')
+    expect(conversationRoot.style.background).toBe('var(--dsw-alias-bg-base)')
 
     document.body.setAttribute('data-dsh-skin-backdrop', '1')
     await tick(20)
     expect(wrapper.style.background).toBe('transparent')
     expect(frame.style.background).toBe('transparent')
+    expect(conversationRoot.style.background).toBe('transparent')
 
     document.body.removeAttribute('data-dsh-skin-backdrop')
     await tick(20)
     expect(wrapper.style.background).toBe('var(--dsw-alias-bg-base)')
     expect(frame.style.background).toBe('var(--dsw-alias-bg-base)')
+    expect(conversationRoot.style.background).toBe('var(--dsw-alias-bg-base)')
   })
 
   it('restores surface backgrounds on dispose while a backdrop is active', async () => {

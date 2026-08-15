@@ -41,10 +41,6 @@ export function presentSkinLayer(options: {
   document.head.appendChild(style)
   const bookkeep = options.kind === 'active' ? document.body : undefined
   if (bookkeep !== undefined && options.fingerprint !== undefined) bookkeep.dataset.dshSkinActive = options.fingerprint
-  // The part-anchor shim reads this flag to clear the opaque shell surfaces
-  // that would otherwise cover the fixed backdrop layer (harness CSS is
-  // unlayered, so only inline styles can win over it).
-  if (bookkeep !== undefined && options.layer.backdrop !== undefined) bookkeep.dataset.dshSkinBackdrop = '1'
   let disposed = false
   return {
     fingerprint: options.fingerprint,
@@ -52,10 +48,21 @@ export function presentSkinLayer(options: {
       if (disposed) return
       disposed = true
       style.remove()
-      if (bookkeep !== undefined) {
-        delete bookkeep.dataset.dshSkinActive
-        delete bookkeep.dataset.dshSkinBackdrop
-      }
+      if (bookkeep !== undefined) delete bookkeep.dataset.dshSkinActive
     },
   }
+}
+
+/**
+ * Rewrite the backdrop flag from the committed layer, decoupled from lane
+ * dispose order: activation swaps present-new-before-dispose-old, so a
+ * per-lane flag would be deleted by the outgoing lane after the incoming one
+ * set it. The part-anchor shim reads this flag to clear the opaque shell
+ * surfaces that would otherwise cover the fixed backdrop layer (harness CSS
+ * is unlayered, so only inline styles can win over it).
+ * @param layer - committed active layer, undefined for the harness default.
+ */
+export function syncBackdropFlag(layer: ThemeLayerDefinition | undefined): void {
+  if (layer?.backdrop !== undefined) document.body.dataset.dshSkinBackdrop = '1'
+  else delete document.body.dataset.dshSkinBackdrop
 }
