@@ -84,9 +84,7 @@ async function dispatch(
   const method = request.method ?? 'GET'
   const requestUrl = request.url ?? '/'
   const rawPathname = requestUrl.split('?', 1)[0] ?? '/'
-  if (rawPathname.includes('\\') && (rawPathname.startsWith(`${PREFIX}/`) || rawPathname.startsWith(`${PREFIX}\\`))) {
-    throw new HttpError(404, 'Skin endpoint not found')
-  }
+  if (rawPathname.includes('\\')) throw new HttpError(404, 'Skin endpoint not found')
   const pathname = new URL(requestUrl, 'http://dsh.local').pathname
   const guideNamespace = rawPathname === `${PREFIX}/guides` || rawPathname.startsWith(`${PREFIX}/guides/`)
   if (guideNamespace) {

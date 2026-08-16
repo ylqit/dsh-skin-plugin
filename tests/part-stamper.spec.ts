@@ -100,8 +100,7 @@ describe('part anchor shim', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
     const late = document.createElement('button')
     document.body.appendChild(late)
-    await new Promise(resolve => setTimeout(resolve, 20))
-    expect(late.getAttribute(PART)).toBe('primitive.button')
+    await vi.waitFor(() => { expect(late.getAttribute(PART)).toBe('primitive.button') })
   })
 
   it('stamps an added control without rescanning every control in the document', async () => {
@@ -345,10 +344,10 @@ describe('part anchor shim', () => {
     await tick()
 
     conversationRoot.remove()
-    await tick(20)
+    await vi.waitFor(() => { expect(conversationRoot.style.background).toBe('var(--dsw-alias-bg-base)') })
     const detachedBackground = conversationRoot.style.background
     slot.append(conversationRoot)
-    await tick(20)
+    await vi.waitFor(() => { expect(conversationRoot.style.background).toBe('transparent') })
     const reattachedBackground = conversationRoot.style.background
 
     dispose()

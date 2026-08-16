@@ -413,7 +413,9 @@ describe('overlay skin data chain', () => {
     })
     expect(copy.manifest.assets).toHaveLength(original.manifest.assets.length)
     expect(copy.experience).toBeDefined()
-    expect(store.library.snapshot().skins.some(skin => skin.source === 'local' && skin.fingerprint === copy.fingerprint)).toBe(true)
+    await vi.waitFor(() => {
+      expect(store.library.snapshot().skins.some(skin => skin.source === 'local' && skin.fingerprint === copy.fingerprint)).toBe(true)
+    })
   })
 
   it('keeps component assets when backdrop images are replaced in Studio', async () => {
