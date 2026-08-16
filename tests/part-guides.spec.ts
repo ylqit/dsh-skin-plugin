@@ -149,4 +149,17 @@ describe('guide asset route', () => {
     expect(response.status).toBe(404)
     expect(JSON.parse(response.body.toString('utf8'))).toMatchObject({ ok: false, error: 'Skin endpoint not found' })
   })
+
+  it.each(
+    ['127.0.0.1', '203.0.113.10'].flatMap(remoteAddress => [
+      ['/api/dsh-skin/guides\\..\\state', remoteAddress],
+      ['/api/dsh-skin/guides\\..\\events', remoteAddress],
+      [`/api/dsh-skin/guides\\..\\skins\\${'a'.repeat(64)}`, remoteAddress],
+      [`/api/dsh-skin/guides\\..\\assets\\${'a'.repeat(64)}\\x.png`, remoteAddress],
+    ]),
+  )('rejects backslashes before URL normalization can escape the guide namespace: %s from %s', async (pathname, remoteAddress) => {
+    const response = await request(pathname, remoteAddress)
+    expect(response.status).toBe(404)
+    expect(JSON.parse(response.body.toString('utf8'))).toMatchObject({ ok: false, error: 'Skin endpoint not found' })
+  })
 })
