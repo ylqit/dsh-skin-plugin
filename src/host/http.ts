@@ -1,4 +1,7 @@
+import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { join } from 'node:path'
+import { PART_GUIDE_FILENAMES } from '../shared/part-guides.ts'
 import { MAX_ARCHIVE_BYTES, SkinArchiveError } from './archive.ts'
 import { SkinLibrary } from './library.ts'
 
@@ -6,6 +9,7 @@ const PREFIX = '/api/dsh-skin'
 const JSON_BODY_LIMIT = 64 * 1024
 const FINGERPRINT = '[a-f0-9]{64}'
 const ASSET_NAME = '[A-Za-z0-9][A-Za-z0-9._-]{0,127}'
+const GUIDE_NAMES = new Set<string>(PART_GUIDE_FILENAMES)
 
 export interface SkinWebServer {
   register(route: {
@@ -17,7 +21,7 @@ export interface SkinWebServer {
 }
 
 /** Register the same-origin management, immutable asset, and invalidation endpoints. */
-export function registerSkinHttp(server: SkinWebServer, library: SkinLibrary): () => void {
+export function registerSkinHttp(server: SkinWebServer, library: SkinLibrary, guidesRoot: string): () => void {
   const streams = new Set<ServerResponse>()
   const heartbeat = setInterval(() => {
     for (const response of [...streams]) {
@@ -45,7 +49,7 @@ export function registerSkinHttp(server: SkinWebServer, library: SkinLibrary): (
     path: PREFIX,
     handler: async (request, response) => {
       try {
-        await dispatch(request, response, library, streams)
+        await dispatch(request, response, library, guidesRoot, streams)
       } catch (error) {
         const status = error instanceof HttpError ? error.status : error instanceof TypeError ? 400 : 500
         const message = status === 500 ? 'Internal skin service error' : error instanceof Error ? error.message : String(error)
@@ -74,6 +78,7 @@ async function dispatch(
   request: IncomingMessage,
   response: ServerResponse,
   library: SkinLibrary,
+  guidesRoot: string,
   streams: Set<ServerResponse>,
 ): Promise<void> {
   const method = request.method ?? 'GET'
@@ -109,6 +114,18 @@ async function dispatch(
       'X-Content-Type-Options': 'nosniff',
     })
     response.end(asset.bytes)
+    return
+  }
+  const guideMatch = new RegExp(`^${PREFIX}/guides/(${ASSET_NAME})$`).exec(pathname)
+  if (method === 'GET' && guideMatch !== null && GUIDE_NAMES.has(guideMatch[1] as string)) {
+    const bytes = await readFile(join(guidesRoot, guideMatch[1] as string))
+    response.writeHead(200, {
+      'Content-Type': 'image/webp',
+      'Content-Length': bytes.byteLength,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+    })
+    response.end(bytes)
     return
   }
   const experienceMatch = new RegExp(`^${PREFIX}/experience/(${FINGERPRINT})/client\\.js$`).exec(pathname)

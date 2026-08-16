@@ -34,6 +34,7 @@
   "files": [
     "lib",
     "builtins",
+    "guides",
     "cordis.patch.yml",
     "README.md",
     "templates"

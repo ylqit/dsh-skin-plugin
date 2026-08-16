@@ -12,6 +12,7 @@ export type {
 } from './shared/contracts.ts'
 
 const BUILTINS_ROOT = fileURLToPath(new URL('../builtins', import.meta.url))
+const GUIDES_ROOT = fileURLToPath(new URL('../guides', import.meta.url))
 
 type DshHomePath = (...segments: string[]) => string
 
@@ -32,7 +33,7 @@ export async function apply(ctx: Context): Promise<void> {
   )
   const injectSkinBoot = createSkinBootInjector(() => library.activeBoot())
   const untapIndex = webServer.tapIndex(injectSkinBoot)
-  const unregisterHttp = registerSkinHttp(webServer, library)
+  const unregisterHttp = registerSkinHttp(webServer, library, GUIDES_ROOT)
   ctx.effect(() => () => {
     unregisterHttp()
     untapIndex()

@@ -17,6 +17,7 @@ import type { SkinHostState, ThemeLayerV2 } from '../src/shared/contracts.ts'
 
 const roots: string[] = []
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
+const GUIDES_ROOT = join(process.cwd(), 'guides')
 
 afterEach(async () => {
   vi.useRealTimers()
@@ -461,7 +462,7 @@ describe('overlay skin data chain', () => {
     registerSkinHttp({
       register: route => { handler = route.handler; return () => {} },
       tapIndex: () => () => {},
-    }, store.library)
+    }, store.library, GUIDES_ROOT)
     const request = Readable.from([Buffer.from('{}')])
     Object.assign(request, { method: 'POST', url: '/api/dsh-skin/prepare', headers: {} })
     Object.defineProperty(request, 'socket', { value: { remoteAddress: '203.0.113.10' } })
@@ -485,7 +486,7 @@ describe('overlay skin data chain', () => {
     registerSkinHttp({
       register: route => { handler = route.handler; return () => {} },
       tapIndex: () => () => {},
-    }, store.library)
+    }, store.library, GUIDES_ROOT)
     const bytes = archive('LegacyApi', { schemaVersion: 2, themePartsVersion: 1, themeSchemaVersion: 1 })
     const request = Readable.from([Buffer.from(bytes)])
     Object.assign(request, {
@@ -523,7 +524,7 @@ describe('overlay skin data chain', () => {
     const dispose = registerSkinHttp({
       register: route => { handler = route.handler; return () => {} },
       tapIndex: () => () => {},
-    }, store.library)
+    }, store.library, GUIDES_ROOT)
     const request = {
       method: 'GET', url: '/api/dsh-skin/events', headers: {},
       once: vi.fn(),
