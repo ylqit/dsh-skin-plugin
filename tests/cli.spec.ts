@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { unzipSync } from 'fflate'
 import { afterEach, expect, it } from 'vitest'
 import { runCli } from '../src/cli.ts'
 
@@ -30,4 +31,43 @@ it('uses the Host parser before writing a packed skin', async () => {
 
   await expect(runCli(['pack', root, output])).rejects.toThrow(/not registered/)
   await expect(import('node:fs/promises').then(fs => fs.stat(output))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('packs schema v4 visuals without compiling executable theme code', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-skin-cli-v4-'))
+  roots.push(root)
+  await mkdir(join(root, 'assets'))
+  await writeFile(join(root, 'assets', 'preview.png'), PNG)
+  await writeFile(join(root, 'assets', 'mark.png'), PNG)
+  await writeFile(join(root, 'skin.config.json'), JSON.stringify({
+    id: 'declarative-theme', name: 'Declarative Theme', version: '3.0.0',
+    preview: { light: 'assets/preview.png', dark: 'assets/preview.png' },
+  }))
+  await writeFile(join(root, 'theme.json'), JSON.stringify({
+    schemaVersion: 2,
+    tokens: { '--dsw-alias-brand-primary': { light: '#315efb', dark: '#8ba6ff' } },
+  }))
+  await writeFile(join(root, 'visuals.json'), JSON.stringify({
+    schemaVersion: 1,
+    items: [{
+      id: 'partner-mark', slot: 'sidebar.brand-mark', template: 'compact-brand', label: '搭档',
+      modes: {
+        light: { assetUrl: 'asset:assets/mark.png' },
+        dark: { assetUrl: 'asset:assets/mark.png' },
+      },
+    }],
+  }))
+  const output = join(root, 'declarative.dshskin')
+
+  await runCli(['pack', root, output])
+
+  const entries = unzipSync(new Uint8Array(await readFile(output)))
+  const manifest = JSON.parse(new TextDecoder().decode(entries['manifest.json'])) as Record<string, unknown>
+  expect(manifest).toMatchObject({
+    schemaVersion: 4,
+    capabilities: ['tokens', 'component-visuals'],
+    visuals: { schemaVersion: 1, entry: 'visuals.json' },
+  })
+  expect(entries['visuals.json']).toBeDefined()
+  expect(entries['experience/client.js']).toBeUndefined()
 })

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "items": [
+    {
+      "id": "bulbasaur-brand-mark",
+      "slot": "sidebar.brand-mark",
+      "template": "image-mark",
+      "modes": {
+        "light": { "assetUrl": "asset:assets/element-mark.png", "fit": "contain", "positionX": 0.5, "positionY": 0.5, "foreground": "#17351f", "background": "rgba(251,255,248,0.76)" },
+        "dark": { "assetUrl": "asset:assets/element-mark.png", "fit": "contain", "positionX": 0.5, "positionY": 0.5, "foreground": "#effbea", "background": "rgba(16,39,27,0.78)" }
+      }
+    }
+  ]
+}

@@ -1,15 +1,14 @@
 #!/usr/bin/env node
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { strToU8, zipSync, type Zippable } from 'fflate'
-import { compileExperience } from './author/compiler.ts'
 import { parseSkinFiles } from './host/archive.ts'
 import type {
-  SkinAssetManifest, SkinManifestV3, SkinPlacement, ThemeLayerV2,
+  SkinAssetManifest, SkinManifestV4, ThemeLayerV2,
 } from './shared/contracts.ts'
-import { SKIN_PLACEMENTS, SKIN_SCHEMA_VERSION, THEME_PARTS_VERSION } from './shared/contracts.ts'
+import { SKIN_SCHEMA_VERSION, SKIN_VISUALS_VERSION, THEME_PARTS_VERSION } from './shared/contracts.ts'
 
 interface AuthorConfig {
   id: string
@@ -19,10 +18,9 @@ interface AuthorConfig {
   description?: string
   tags?: readonly string[]
   preview: { light: string; dark: string }
-  placements?: readonly SkinPlacement[]
 }
 
-const TEMPLATE_ROOT = fileURLToPath(new URL('../templates/experience-skin', import.meta.url))
+const TEMPLATE_ROOT = fileURLToPath(new URL('../templates/declarative-skin', import.meta.url))
 
 export async function runCli(argv = process.argv.slice(2)): Promise<void> {
   const [command, target, output] = argv
@@ -55,6 +53,15 @@ async function packTheme(root: string, requestedOutput?: string): Promise<void> 
   const themeBytes = new Uint8Array(await readFile(resolve(root, 'theme.json')))
   const theme = parseThemeShape(JSON.parse(new TextDecoder().decode(themeBytes)) as unknown)
   const files: Record<string, Uint8Array> = { 'theme.json': themeBytes }
+  let visualsBytes: Uint8Array | undefined
+  let visualPaths = new Set<string>()
+  try {
+    visualsBytes = new Uint8Array(await readFile(resolve(root, 'visuals.json')))
+    visualPaths = collectVisualAssetPaths(JSON.parse(new TextDecoder().decode(visualsBytes)) as unknown)
+    files['visuals.json'] = visualsBytes
+  } catch (error) {
+    if (!isMissing(error)) throw error
+  }
   const assetNames = (await readdir(resolve(root, 'assets'), { withFileTypes: true }))
     .filter(entry => entry.isFile())
     .map(entry => entry.name)
@@ -77,38 +84,17 @@ async function packTheme(root: string, requestedOutput?: string): Promise<void> 
       mimeType: imageMime(name),
       sha256: sha256(bytes),
       bytes: bytes.byteLength,
-      purpose: backdropPaths.has(path) ? 'backdrop' : previewPaths.has(path) ? 'preview' : 'component',
+      purpose: backdropPaths.has(path) ? 'backdrop' : previewPaths.has(path) ? 'preview' : visualPaths.has(path) ? 'visual' : 'component',
     })
   }
 
-  const placements = Object.freeze([...(config.placements ?? [])])
-  let experience: SkinManifestV3['experience']
-  try {
-    await readFile(resolve(root, 'experience', 'client.tsx'))
-    if (placements.length === 0) throw new TypeError('skin.config.json 必须为 Experience 声明至少一个 placement')
-    const moduleId = `dsh-skin:${randomUUID()}`
-    const bytes = await compileExperience(root, moduleId)
-    files['experience/client.js'] = bytes
-    experience = {
-      apiVersion: 1,
-      moduleId,
-      entry: 'experience/client.js',
-      sha256: sha256(bytes),
-      bytes: bytes.byteLength,
-      placements,
-    }
-  } catch (error) {
-    if (!isMissing(error)) throw error
-    if (placements.length > 0) throw new TypeError('声明了 placements，但缺少 experience/client.tsx')
-  }
-
-  const capabilities: SkinManifestV3['capabilities'] = Object.freeze([
+  const capabilities: SkinManifestV4['capabilities'] = Object.freeze([
     ...(Object.keys(theme.tokens).length === 0 ? [] : ['tokens' as const]),
     ...(theme.backdrop === undefined ? [] : ['backdrop' as const]),
     ...((theme.partStyles?.length ?? 0) === 0 ? [] : ['component-parts' as const]),
-    ...(experience === undefined ? [] : ['component-experience' as const]),
+    ...(visualsBytes === undefined ? [] : ['component-visuals' as const]),
   ])
-  const manifest: SkinManifestV3 = {
+  const manifest: SkinManifestV4 = {
     schemaVersion: SKIN_SCHEMA_VERSION,
     id: config.id,
     name: config.name,
@@ -123,7 +109,7 @@ async function packTheme(root: string, requestedOutput?: string): Promise<void> 
       dark: `asset:${normalizeAssetPath(config.preview.dark)}`,
     },
     assets,
-    ...(experience === undefined ? {} : { experience }),
+    ...(visualsBytes === undefined ? {} : { visuals: { schemaVersion: SKIN_VISUALS_VERSION, entry: 'visuals.json' as const } }),
   }
   files['manifest.json'] = strToU8(`${JSON.stringify(manifest, null, 2)}\n`)
   const fingerprint = parseSkinFiles(files).fingerprint
@@ -137,7 +123,7 @@ async function packTheme(root: string, requestedOutput?: string): Promise<void> 
 
 function parseAuthorConfig(value: unknown): AuthorConfig {
   const source = record(value, 'skin.config.json')
-  const allowed = new Set(['id', 'name', 'version', 'author', 'description', 'tags', 'preview', 'placements'])
+  const allowed = new Set(['id', 'name', 'version', 'author', 'description', 'tags', 'preview'])
   const unknown = Object.keys(source).find(key => !allowed.has(key))
   if (unknown !== undefined) throw new TypeError(`skin.config.json 含未知字段 ${JSON.stringify(unknown)}`)
   const id = requiredString(source.id, 'id', 80)
@@ -146,10 +132,6 @@ function parseAuthorConfig(value: unknown): AuthorConfig {
   const version = requiredString(source.version, 'version', 40)
   const preview = record(source.preview, 'preview')
   exactKeys(preview, ['light', 'dark'], 'preview')
-  const placements = source.placements === undefined ? undefined : stringArray(source.placements, 'placements')
-  if (placements?.some(value => !SKIN_PLACEMENTS.includes(value as SkinPlacement)) === true) {
-    throw new TypeError('skin.config.json.placements 含未知主题 Slot')
-  }
   const tags = source.tags === undefined ? undefined : stringArray(source.tags, 'tags')
   return {
     id,
@@ -162,8 +144,22 @@ function parseAuthorConfig(value: unknown): AuthorConfig {
       light: requiredString(preview.light, 'preview.light', 160),
       dark: requiredString(preview.dark, 'preview.dark', 160),
     },
-    ...(placements === undefined ? {} : { placements: placements as SkinPlacement[] }),
   }
+}
+
+function collectVisualAssetPaths(value: unknown): Set<string> {
+  const source = record(value, 'visuals.json')
+  if (!Array.isArray(source.items)) throw new TypeError('visuals.json.items 必须为数组')
+  const paths = new Set<string>()
+  for (const [index, itemValue] of source.items.entries()) {
+    const item = record(itemValue, `visuals.json.items[${String(index)}]`)
+    const modes = record(item.modes, `visuals.json.items[${String(index)}].modes`)
+    for (const mode of ['light', 'dark'] as const) {
+      const config = record(modes[mode], `visuals.json.items[${String(index)}].modes.${mode}`)
+      if (config.assetUrl !== undefined) paths.add(normalizeAssetPath(requiredString(config.assetUrl, `visuals.json.items[${String(index)}].modes.${mode}.assetUrl`, 160)))
+    }
+  }
+  return paths
 }
 
 function parseThemeShape(value: unknown): ThemeLayerV2 & { schemaVersion: number } {

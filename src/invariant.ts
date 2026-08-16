@@ -1,4 +1,4 @@
-/** Package-owned invariant companion for the validated v3 skin boundary. */
+/** Package-owned invariant companion for the validated v4 skin boundary. */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'

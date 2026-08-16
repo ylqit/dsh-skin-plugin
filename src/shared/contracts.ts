@@ -1,17 +1,20 @@
-export const SKIN_SCHEMA_VERSION = 3 as const
+export const SKIN_SCHEMA_VERSION = 4 as const
 export const THEME_SCHEMA_VERSION = 2 as const
 export const THEME_PARTS_VERSION = 2 as const
-export const SKIN_CAPABILITIES = ['tokens', 'backdrop', 'component-parts', 'component-experience'] as const
-export const SKIN_PLACEMENTS = [
-  'skin.shell.top',
-  'skin.shell.bottom',
-  'skin.shell.floating',
-  'skin.sidebar.brand',
-  'skin.conversation.hero',
-  'skin.composer.decorator',
+export const SKIN_VISUALS_VERSION = 1 as const
+export const PLUGIN_VERSION = '0.4.0' as const
+export const SKIN_CAPABILITIES = ['tokens', 'backdrop', 'component-parts', 'component-visuals'] as const
+export const VISUAL_SLOT_IDS = [
+  'sidebar.brand-mark',
+  'conversation.empty-mark',
+  'conversation.composer-mark',
+  'tool.card-mark',
+  'settings.section-mark',
 ] as const
+export const VISUAL_TEMPLATE_KINDS = ['image-mark', 'compact-brand', 'status-chip'] as const
 
-export type SkinPlacement = (typeof SKIN_PLACEMENTS)[number]
+export type VisualSlotId = (typeof VISUAL_SLOT_IDS)[number]
+export type VisualTemplateKind = (typeof VISUAL_TEMPLATE_KINDS)[number]
 export type SkinSource = 'builtin' | 'local'
 export type SkinImportErrorCode = 'UNSUPPORTED_PROTOCOL' | 'INVALID_ARCHIVE' | 'INVALID_ASSET' | 'SECURITY_LIMIT'
 
@@ -26,6 +29,7 @@ export interface SkinRuntimeCompatibility {
   skinSchemaVersion: typeof SKIN_SCHEMA_VERSION
   themeSchemaVersion: typeof THEME_SCHEMA_VERSION
   themePartsVersion: typeof THEME_PARTS_VERSION
+  visualsSchemaVersion: typeof SKIN_VISUALS_VERSION
 }
 
 export type ThemeTokenName = string
@@ -117,7 +121,7 @@ export interface SkinAssetManifest {
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp'
   sha256: string
   bytes: number
-  purpose: 'backdrop' | 'preview' | 'component'
+  purpose: 'backdrop' | 'preview' | 'component' | 'visual'
 }
 
 export interface SkinPreviewManifest {
@@ -125,16 +129,12 @@ export interface SkinPreviewManifest {
   dark: string
 }
 
-export interface SkinExperienceManifest {
-  apiVersion: 1
-  moduleId: string
-  entry: 'experience/client.js'
-  sha256: string
-  bytes: number
-  placements: readonly SkinPlacement[]
+export interface SkinVisualsManifest {
+  schemaVersion: typeof SKIN_VISUALS_VERSION
+  entry: 'visuals.json'
 }
 
-export interface SkinManifestV3 {
+export interface SkinManifestV4 {
   schemaVersion: typeof SKIN_SCHEMA_VERSION
   id: string
   name: string
@@ -146,16 +146,30 @@ export interface SkinManifestV3 {
   capabilities: readonly (typeof SKIN_CAPABILITIES)[number][]
   preview?: SkinPreviewManifest
   assets: readonly SkinAssetManifest[]
-  experience?: SkinExperienceManifest
+  visuals?: SkinVisualsManifest
 }
 
-export interface SkinExperienceDescriptor {
-  apiVersion: 1
-  moduleId: string
-  url: string
-  rev: string
-  placements: readonly SkinPlacement[]
-  assets: Readonly<Record<string, string>>
+export interface SkinVisualMode {
+  assetUrl?: string
+  foreground?: ThemeColorValue
+  background?: ThemeColorValue
+  fit?: 'cover' | 'contain'
+  positionX?: number
+  positionY?: number
+}
+
+export interface SkinVisualItem {
+  id: string
+  slot: VisualSlotId
+  template: VisualTemplateKind
+  label?: string
+  value?: string
+  modes: ThemeModePair<SkinVisualMode>
+}
+
+export interface SkinVisualsV1 {
+  schemaVersion: typeof SKIN_VISUALS_VERSION
+  items: readonly SkinVisualItem[]
 }
 
 export interface SkinPreviewUrls {
@@ -175,24 +189,28 @@ export interface StoredSkinSummary {
   tags: readonly string[]
   parts: readonly ThemePartId[]
   preview?: SkinPreviewUrls
-  experience?: SkinExperienceDescriptor
+  visualSlots: readonly VisualSlotId[]
 }
 
 export interface SkinHostState {
+  runtime: {
+    pluginVersion: string
+    compatibility: SkinRuntimeCompatibility
+  }
   activationRevision: number
   activeFingerprint?: string
   previousConfirmed?: string
   activeLayer?: ThemeLayerV2
-  activeExperience?: SkinExperienceDescriptor
+  activeVisuals?: SkinVisualsV1
   skins: readonly StoredSkinSummary[]
 }
 
 export interface SkinDraftDescriptor {
   fingerprint: string
   source: SkinSource
-  manifest: SkinManifestV3
+  manifest: SkinManifestV4
   layer: ThemeLayerV2
-  experience?: SkinExperienceDescriptor
+  visuals?: SkinVisualsV1
 }
 
 export interface PrepareSkinResult {
@@ -200,14 +218,14 @@ export interface PrepareSkinResult {
   fingerprint?: string
   activationRevision: number
   layer?: ThemeLayerV2
-  experience?: SkinExperienceDescriptor
+  visuals?: SkinVisualsV1
 }
 
 export interface CommitSkinResult {
   fingerprint?: string
   activationRevision: number
   layer?: ThemeLayerV2
-  experience?: SkinExperienceDescriptor
+  visuals?: SkinVisualsV1
 }
 
 export interface ThemePartInspection {

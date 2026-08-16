@@ -1,27 +1,35 @@
 import { createHash } from 'node:crypto'
 import { unzipSync, type UnzipFileInfo } from 'fflate'
-import { validateThemeLayer } from '../shared/theme-layer.ts'
+import { validateThemeColorValue, validateThemeLayer } from '../shared/theme-layer.ts'
 import {
-  SKIN_CAPABILITIES, SKIN_PLACEMENTS, SKIN_SCHEMA_VERSION, THEME_PARTS_VERSION, THEME_SCHEMA_VERSION,
-  type SkinAssetManifest, type SkinExperienceDescriptor, type SkinExperienceManifest,
+  SKIN_CAPABILITIES, SKIN_SCHEMA_VERSION, SKIN_VISUALS_VERSION, THEME_PARTS_VERSION, THEME_SCHEMA_VERSION,
+  VISUAL_SLOT_IDS, VISUAL_TEMPLATE_KINDS,
+  type SkinAssetManifest, type SkinVisualItem, type SkinVisualMode, type SkinVisualsManifest,
   type SkinImportErrorCode,
-  type SkinManifestV3, type SkinPlacement,
+  type SkinManifestV4,
   type SkinPreviewManifest, type SkinPreviewUrls, type ThemeBackdropMode, type ThemeLayerV2,
-  type ThemeSurfaceImage,
+  type ThemeSurfaceImage, type VisualSlotId, type VisualTemplateKind, type SkinVisualsV1,
 } from '../shared/contracts.ts'
 
 export const MAX_ARCHIVE_BYTES = 24 * 1024 * 1024
 const MAX_EXPANDED_BYTES = 48 * 1024 * 1024
 const MAX_ENTRY_BYTES = 16 * 1024 * 1024
-const MAX_EXPERIENCE_BYTES = 2 * 1024 * 1024
 const MAX_ENTRIES = 48
 const MAX_ASSETS = 24
+const MAX_VISUALS = VISUAL_SLOT_IDS.length
 const MAX_COMPRESSION_RATIO = 200
 const JSON_DECODER = new TextDecoder('utf-8', { fatal: true })
 const ASSET_PATH = /^assets\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const HASH = /^[a-f0-9]{64}$/
-const MODULE_ID = /^dsh-skin:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
-const EXPERIENCE_ENTRY = 'experience/client.js'
+const VISUALS_ENTRY = 'visuals.json'
+const VISUAL_ID = /^[a-z0-9][a-z0-9-]{1,62}$/
+const VISUAL_TEMPLATES_BY_SLOT: Readonly<Record<VisualSlotId, readonly VisualTemplateKind[]>> = Object.freeze({
+  'sidebar.brand-mark': ['image-mark', 'compact-brand'],
+  'conversation.empty-mark': ['image-mark', 'status-chip'],
+  'conversation.composer-mark': ['image-mark', 'status-chip'],
+  'tool.card-mark': ['image-mark', 'status-chip'],
+  'settings.section-mark': ['image-mark', 'status-chip'],
+})
 
 export class SkinArchiveError extends TypeError {
   constructor(
@@ -36,10 +44,10 @@ export class SkinArchiveError extends TypeError {
 }
 export interface ParsedSkinArchive {
   fingerprint: string
-  manifest: SkinManifestV3
+  manifest: SkinManifestV4
   layer: ThemeLayerV2
   preview?: SkinPreviewUrls
-  experience?: SkinExperienceDescriptor
+  visuals?: SkinVisualsV1
   files: ReadonlyMap<string, Uint8Array>
 }
 
@@ -99,21 +107,25 @@ function parseSkinFilesUnchecked(
   }
 
   const manifest = parseManifest(parseJson(entries['manifest.json'], 'manifest.json'))
-  const supportsExperience = manifest.experience !== undefined
+  const supportsVisuals = manifest.visuals !== undefined
   const unsupported = names.find(name => name !== 'manifest.json' && name !== 'theme.json'
-    && !ASSET_PATH.test(name) && !(supportsExperience && name === EXPERIENCE_ENTRY))
+    && !ASSET_PATH.test(name) && !(supportsVisuals && name === VISUALS_ENTRY))
   if (unsupported !== undefined) throw new TypeError(`skin archive contains unsupported entry ${JSON.stringify(unsupported)}`)
 
   const themeSource = parseThemeJson(parseJson(entries['theme.json'], 'theme.json'))
+  const visualsSource = manifest.visuals === undefined
+    ? undefined
+    : parseVisualsJson(parseJson(entries[manifest.visuals.entry], manifest.visuals.entry))
   validateAssets(manifest.assets, entries)
-  validateExperience(manifest, entries)
-  validateCapabilities(manifest, themeSource)
+  validateCapabilities(manifest, themeSource, visualsSource)
   const fingerprint = fingerprintEntries(entries)
   const layer = rewriteAssetReferences(themeSource, manifest, fingerprint)
+  const visuals = visualsSource === undefined ? undefined : rewriteVisualAssetReferences(visualsSource, manifest, fingerprint)
   return Object.freeze({
     fingerprint,
     manifest,
     layer: validateThemeLayer(layer),
+    ...(visuals === undefined ? {} : { visuals }),
     ...presentationFields(manifest, fingerprint),
     files: readonlyFiles(entries),
   })
@@ -167,7 +179,7 @@ function optionalString(value: unknown, subject: string, maximum: number): strin
   return value === undefined ? undefined : requiredString(value, subject, maximum)
 }
 
-function parseManifest(value: unknown): SkinManifestV3 {
+function parseManifest(value: unknown): SkinManifestV4 {
   const source = object(value, 'manifest.json')
   if (source.schemaVersion !== SKIN_SCHEMA_VERSION) {
     throw new SkinArchiveError(
@@ -178,7 +190,7 @@ function parseManifest(value: unknown): SkinManifestV3 {
   }
   exactKeys(source, [
     'schemaVersion', 'id', 'name', 'version', 'author', 'description', 'tags',
-    'themePartsVersion', 'capabilities', 'preview', 'assets', 'experience',
+    'themePartsVersion', 'capabilities', 'preview', 'assets', 'visuals',
   ], 'manifest.json')
   if (source.themePartsVersion !== THEME_PARTS_VERSION) {
     throw new SkinArchiveError(
@@ -211,8 +223,8 @@ function parseManifest(value: unknown): SkinManifestV3 {
     capabilities: Object.freeze(capabilities),
     assets: Object.freeze(assets),
     ...(source.preview === undefined ? {} : { preview: parsePreview(source.preview) }),
-    ...(source.experience === undefined ? {} : { experience: parseExperience(source.experience) }),
-  } satisfies SkinManifestV3)
+    ...(source.visuals === undefined ? {} : { visuals: parseVisualsManifest(source.visuals) }),
+  } satisfies SkinManifestV4)
 }
 
 function stableArchiveError(error: unknown): SkinArchiveError {
@@ -246,36 +258,18 @@ function parsePreview(value: unknown): SkinPreviewManifest {
   })
 }
 
-function parseExperience(value: unknown): SkinExperienceManifest {
-  const source = object(value, 'manifest.json.experience')
-  exactKeys(source, ['apiVersion', 'moduleId', 'entry', 'sha256', 'bytes', 'placements'], 'manifest.json.experience')
-  if (source.apiVersion !== 1) throw new TypeError('manifest.json.experience.apiVersion must be 1')
-  if (typeof source.moduleId !== 'string' || !MODULE_ID.test(source.moduleId)) {
-    throw new TypeError('manifest.json.experience.moduleId must be a dsh-skin UUID')
+function parseVisualsManifest(value: unknown): SkinVisualsManifest {
+  const source = object(value, 'manifest.json.visuals')
+  exactKeys(source, ['schemaVersion', 'entry'], 'manifest.json.visuals')
+  if (source.schemaVersion !== SKIN_VISUALS_VERSION) {
+    throw new SkinArchiveError(
+      'UNSUPPORTED_PROTOCOL',
+      `manifest.json.visuals.schemaVersion must be ${String(SKIN_VISUALS_VERSION)}`,
+      'manifest.json.visuals.schemaVersion',
+    )
   }
-  if (source.entry !== EXPERIENCE_ENTRY) throw new TypeError(`manifest.json.experience.entry must be ${EXPERIENCE_ENTRY}`)
-  if (typeof source.sha256 !== 'string' || !HASH.test(source.sha256)) throw new TypeError('manifest.json.experience.sha256 must be lowercase SHA-256')
-  if (!Number.isSafeInteger(source.bytes) || (source.bytes as number) < 1 || (source.bytes as number) > MAX_EXPERIENCE_BYTES) {
-    throw new TypeError(`manifest.json.experience.bytes must be between 1 and ${String(MAX_EXPERIENCE_BYTES)}`)
-  }
-  if (!Array.isArray(source.placements) || source.placements.length > SKIN_PLACEMENTS.length) {
-    throw new TypeError('manifest.json.experience.placements must be an array of supported placements')
-  }
-  const placements = source.placements.map((placement) => {
-    if (typeof placement !== 'string' || !(SKIN_PLACEMENTS as readonly string[]).includes(placement)) {
-      throw new TypeError(`manifest.json.experience contains unsupported placement ${JSON.stringify(placement)}`)
-    }
-    return placement as SkinPlacement
-  })
-  if (new Set(placements).size !== placements.length) throw new TypeError('manifest.json.experience.placements contains duplicates')
-  return Object.freeze({
-    apiVersion: 1,
-    moduleId: source.moduleId,
-    entry: EXPERIENCE_ENTRY,
-    sha256: source.sha256,
-    bytes: source.bytes as number,
-    placements: Object.freeze(placements),
-  })
+  if (source.entry !== VISUALS_ENTRY) throw new TypeError(`manifest.json.visuals.entry must be ${VISUALS_ENTRY}`)
+  return Object.freeze({ schemaVersion: SKIN_VISUALS_VERSION, entry: VISUALS_ENTRY })
 }
 
 function parseAsset(value: unknown, index: number): SkinAssetManifest {
@@ -290,7 +284,7 @@ function parseAsset(value: unknown, index: number): SkinAssetManifest {
   if (!Number.isSafeInteger(source.bytes) || (source.bytes as number) < 1 || (source.bytes as number) > MAX_ENTRY_BYTES) {
     throw new TypeError(`${subject}.bytes is outside the accepted range`)
   }
-  if (source.purpose !== 'backdrop' && source.purpose !== 'preview' && source.purpose !== 'component') {
+  if (source.purpose !== 'backdrop' && source.purpose !== 'preview' && source.purpose !== 'component' && source.purpose !== 'visual') {
     throw new TypeError(`${subject}.purpose is unsupported`)
   }
   return Object.freeze({
@@ -319,6 +313,89 @@ function parseThemeJson(value: unknown): ThemeLayerV2 {
   }
 }
 
+function parseVisualsJson(value: unknown): SkinVisualsV1 {
+  const source = object(value, VISUALS_ENTRY)
+  exactKeys(source, ['schemaVersion', 'items'], VISUALS_ENTRY)
+  if (source.schemaVersion !== SKIN_VISUALS_VERSION) {
+    throw new SkinArchiveError(
+      'UNSUPPORTED_PROTOCOL',
+      `${VISUALS_ENTRY}.schemaVersion must be ${String(SKIN_VISUALS_VERSION)}`,
+      `${VISUALS_ENTRY}.schemaVersion`,
+    )
+  }
+  if (!Array.isArray(source.items) || source.items.length > MAX_VISUALS) {
+    throw new TypeError(`${VISUALS_ENTRY}.items must contain at most ${String(MAX_VISUALS)} entries`)
+  }
+  const items = source.items.map((item, index) => parseVisualItem(item, index))
+  if (new Set(items.map(item => item.id)).size !== items.length) throw new TypeError(`${VISUALS_ENTRY}.items contains duplicate ids`)
+  if (new Set(items.map(item => item.slot)).size !== items.length) throw new TypeError(`${VISUALS_ENTRY}.items contains duplicate slots`)
+  return Object.freeze({ schemaVersion: SKIN_VISUALS_VERSION, items: Object.freeze(items) })
+}
+
+function parseVisualItem(value: unknown, index: number): SkinVisualItem {
+  const subject = `${VISUALS_ENTRY}.items[${String(index)}]`
+  const source = object(value, subject)
+  exactKeys(source, ['id', 'slot', 'template', 'label', 'value', 'modes'], subject)
+  if (typeof source.id !== 'string' || !VISUAL_ID.test(source.id)) throw new TypeError(`${subject}.id is invalid`)
+  if (typeof source.slot !== 'string' || !(VISUAL_SLOT_IDS as readonly string[]).includes(source.slot)) {
+    throw new TypeError(`${subject}.slot is unsupported`)
+  }
+  if (typeof source.template !== 'string' || !(VISUAL_TEMPLATE_KINDS as readonly string[]).includes(source.template)) {
+    throw new TypeError(`${subject}.template is unsupported`)
+  }
+  const slot = source.slot as VisualSlotId
+  const template = source.template as VisualTemplateKind
+  if (!VISUAL_TEMPLATES_BY_SLOT[slot].includes(template)) throw new TypeError(`${subject}.template is not supported by ${slot}`)
+  const modes = object(source.modes, `${subject}.modes`)
+  exactKeys(modes, ['light', 'dark'], `${subject}.modes`)
+  if (!Object.hasOwn(modes, 'light') || !Object.hasOwn(modes, 'dark')) throw new TypeError(`${subject}.modes must contain light and dark`)
+  const parsedModes = Object.freeze({
+    light: parseVisualMode(modes.light, `${subject}.modes.light`),
+    dark: parseVisualMode(modes.dark, `${subject}.modes.dark`),
+  })
+  const label = optionalString(source.label, `${subject}.label`, 40)
+  const visualValue = optionalString(source.value, `${subject}.value`, 40)
+  if ((template === 'image-mark' || template === 'compact-brand')
+    && (parsedModes.light.assetUrl === undefined || parsedModes.dark.assetUrl === undefined)) {
+    throw new TypeError(`${subject}.${template} requires Light and Dark assets`)
+  }
+  if ((template === 'compact-brand' || template === 'status-chip') && label === undefined) {
+    throw new TypeError(`${subject}.${template} requires a label`)
+  }
+  return Object.freeze({
+    id: source.id,
+    slot,
+    template,
+    ...(label === undefined ? {} : { label }),
+    ...(visualValue === undefined ? {} : { value: visualValue }),
+    modes: parsedModes,
+  })
+}
+
+function parseVisualMode(value: unknown, subject: string): SkinVisualMode {
+  const source = object(value, subject)
+  exactKeys(source, ['assetUrl', 'foreground', 'background', 'fit', 'positionX', 'positionY'], subject)
+  if (source.fit !== undefined && source.fit !== 'cover' && source.fit !== 'contain') {
+    throw new TypeError(`${subject}.fit must be cover or contain`)
+  }
+  for (const field of ['positionX', 'positionY'] as const) {
+    const position = source[field]
+    if (position !== undefined && (typeof position !== 'number' || !Number.isFinite(position) || position < 0 || position > 1)) {
+      throw new TypeError(`${subject}.${field} must be between 0 and 1`)
+    }
+  }
+  const positionX = typeof source.positionX === 'number' ? source.positionX : undefined
+  const positionY = typeof source.positionY === 'number' ? source.positionY : undefined
+  return Object.freeze({
+    ...(source.assetUrl === undefined ? {} : { assetUrl: `asset:${assetReference(source.assetUrl, `${subject}.assetUrl`)}` }),
+    ...(source.foreground === undefined ? {} : { foreground: validateThemeColorValue(source.foreground, `${subject}.foreground`) }),
+    ...(source.background === undefined ? {} : { background: validateThemeColorValue(source.background, `${subject}.background`) }),
+    ...(source.fit === undefined ? {} : { fit: source.fit }),
+    ...(positionX === undefined ? {} : { positionX }),
+    ...(positionY === undefined ? {} : { positionY }),
+  })
+}
+
 function validateAssets(assets: readonly SkinAssetManifest[], entries: Record<string, Uint8Array>): void {
   const declared = new Set(assets.map(asset => asset.path))
   const unexpected = Object.keys(entries).find(name => ASSET_PATH.test(name) && !declared.has(name))
@@ -336,45 +413,24 @@ function validateAssets(assets: readonly SkinAssetManifest[], entries: Record<st
   }
 }
 
-function validateExperience(manifest: SkinManifestV3, entries: Record<string, Uint8Array>): void {
-  if (manifest.experience === undefined) {
-    if (entries[EXPERIENCE_ENTRY] !== undefined) throw new TypeError('skin archive contains an undeclared experience bundle')
-    return
-  }
-  const bytes = entries[manifest.experience.entry]
-  if (bytes === undefined) throw new TypeError('skin archive is missing experience/client.js')
-  if (bytes.byteLength !== manifest.experience.bytes) throw new TypeError('skin experience byte length does not match its manifest')
-  if (createHash('sha256').update(bytes).digest('hex') !== manifest.experience.sha256) {
-    throw new TypeError('skin experience hash does not match its manifest')
-  }
-  try {
-    const source = JSON_DECODER.decode(bytes)
-    if (source.includes('\0')) throw new TypeError('skin experience must not contain NUL bytes')
-  } catch (error) {
-    if (error instanceof TypeError && error.message === 'skin experience must not contain NUL bytes') throw error
-    throw new TypeError('skin experience must be valid UTF-8 JavaScript', { cause: error })
-  }
-}
-
 function matchesImageSignature(bytes: Uint8Array, mimeType: SkinAssetManifest['mimeType']): boolean {
   if (mimeType === 'image/png') return bytes.length >= 8 && bytes.slice(0, 8).every((byte, index) => byte === [137, 80, 78, 71, 13, 10, 26, 10][index])
   if (mimeType === 'image/jpeg') return bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9
   return bytes.length >= 12 && new TextDecoder().decode(bytes.slice(0, 4)) === 'RIFF' && new TextDecoder().decode(bytes.slice(8, 12)) === 'WEBP'
 }
 
-function validateCapabilities(manifest: SkinManifestV3, layer: ThemeLayerV2): void {
+function validateCapabilities(manifest: SkinManifestV4, layer: ThemeLayerV2, visuals: SkinVisualsV1 | undefined): void {
   const declared = new Set(manifest.capabilities)
   if (Object.keys(layer.tokens).length > 0 && !declared.has('tokens')) throw new TypeError('manifest.json must declare the tokens capability')
   if (layer.backdrop !== undefined && !declared.has('backdrop')) throw new TypeError('manifest.json must declare the backdrop capability')
   if ((layer.partStyles?.length ?? 0) > 0 && !declared.has('component-parts')) throw new TypeError('manifest.json must declare the component-parts capability')
-  const experience = manifest.experience
-  if (experience !== undefined && !declared.has('component-experience')) throw new TypeError('manifest.json must declare the component-experience capability')
-  if (experience === undefined && declared.has('component-experience')) throw new TypeError('manifest.json declares component-experience without an experience bundle')
+  if (visuals !== undefined && !declared.has('component-visuals')) throw new TypeError('manifest.json must declare the component-visuals capability')
+  if (visuals === undefined && declared.has('component-visuals')) throw new TypeError('manifest.json declares component-visuals without visuals.json')
 }
 
 function rewriteAssetReferences(
   layer: ThemeLayerV2,
-  manifest: SkinManifestV3,
+  manifest: SkinManifestV4,
   fingerprint: string,
 ): ThemeLayerV2 {
   const assets = new Map(manifest.assets.map(asset => [asset.path, asset]))
@@ -418,7 +474,35 @@ function rewriteAssetReferences(
   return { ...layer, ...(backdrop === undefined ? {} : { backdrop }), ...(partStyles === undefined ? {} : { partStyles }) }
 }
 
-function validatePurposeReferences(manifest: SkinManifestV3, backdropReferences: ReadonlySet<string>): void {
+function rewriteVisualAssetReferences(
+  visuals: SkinVisualsV1,
+  manifest: SkinManifestV4,
+  fingerprint: string,
+): SkinVisualsV1 {
+  const assets = new Map(manifest.assets.map(asset => [asset.path, asset]))
+  const referenced = new Set<string>()
+  const rewriteMode = (mode: SkinVisualMode, subject: string): SkinVisualMode => {
+    if (mode.assetUrl === undefined) return mode
+    const path = assetReference(mode.assetUrl, subject)
+    const asset = assets.get(path)
+    if (asset === undefined) throw new TypeError(`${VISUALS_ENTRY} references undeclared asset ${JSON.stringify(path)}`)
+    if (asset.purpose !== 'visual') throw new TypeError(`${VISUALS_ENTRY} asset ${JSON.stringify(path)} must have purpose visual`)
+    referenced.add(path)
+    return Object.freeze({ ...mode, assetUrl: assetUrl(fingerprint, path) })
+  }
+  const items = visuals.items.map((item, index) => Object.freeze({
+    ...item,
+    modes: Object.freeze({
+      light: rewriteMode(item.modes.light, `${VISUALS_ENTRY}.items[${String(index)}].modes.light.assetUrl`),
+      dark: rewriteMode(item.modes.dark, `${VISUALS_ENTRY}.items[${String(index)}].modes.dark.assetUrl`),
+    }),
+  }))
+  const unused = manifest.assets.find(asset => asset.purpose === 'visual' && !referenced.has(asset.path))
+  if (unused !== undefined) throw new TypeError(`manifest.json declares unreferenced visual asset ${JSON.stringify(unused.path)}`)
+  return Object.freeze({ schemaVersion: SKIN_VISUALS_VERSION, items: Object.freeze(items) })
+}
+
+function validatePurposeReferences(manifest: SkinManifestV4, backdropReferences: ReadonlySet<string>): void {
   const previewReferences = manifest.preview === undefined
     ? new Set<string>()
     : new Set([
@@ -443,27 +527,14 @@ function validatePurposeReferences(manifest: SkinManifestV3, backdropReferences:
 }
 
 function presentationFields(
-  manifest: SkinManifestV3,
+  manifest: SkinManifestV4,
   fingerprint: string,
-): { preview?: SkinPreviewUrls; experience?: SkinExperienceDescriptor } {
+): { preview?: SkinPreviewUrls } {
   const preview = manifest.preview === undefined ? undefined : Object.freeze({
     light: assetUrl(fingerprint, assetReference(manifest.preview.light, 'manifest.json.preview.light')),
     dark: assetUrl(fingerprint, assetReference(manifest.preview.dark, 'manifest.json.preview.dark')),
   })
-  if (manifest.experience === undefined) return preview === undefined ? {} : { preview }
-  const assets = Object.freeze(Object.fromEntries(manifest.assets
-    .map(asset => [asset.path.slice('assets/'.length), assetUrl(fingerprint, asset.path)])))
-  return {
-    ...(preview === undefined ? {} : { preview }),
-    experience: Object.freeze({
-      apiVersion: 1,
-      moduleId: manifest.experience.moduleId,
-      url: `/api/dsh-skin/experience/${fingerprint}/client.js`,
-      rev: manifest.experience.sha256,
-      placements: manifest.experience.placements,
-      assets,
-    }),
-  }
+  return preview === undefined ? {} : { preview }
 }
 
 function assetReference(value: unknown, subject: string): string {

@@ -1,10 +1,9 @@
 {
   "id": "bulbasaur-growth",
   "name": "妙蛙种子生长舱",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "author": "DSH Skin Demo",
-  "description": "绿色植物界面、藤叶品牌区与成长状态组件。",
+  "description": "通透植物舱背景、分层玻璃表面与紧凑品牌标志。",
   "tags": ["green", "plant", "demo"],
-  "preview": { "light": "assets/backdrop-light.webp", "dark": "assets/backdrop-dark.webp" },
-  "placements": ["skin.sidebar.brand", "skin.conversation.hero"]
+  "preview": { "light": "assets/backdrop-light.webp", "dark": "assets/backdrop-dark.webp" }
 }

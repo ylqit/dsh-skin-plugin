@@ -135,19 +135,6 @@ async function dispatch(
     response.end(asset.bytes)
     return
   }
-  const experienceMatch = new RegExp(`^${PREFIX}/experience/(${FINGERPRINT})/client\\.js$`).exec(pathname)
-  if (method === 'GET' && experienceMatch !== null) {
-    const experience = library.experience(experienceMatch[1] as string)
-    response.writeHead(200, {
-      'Content-Type': 'text/javascript; charset=utf-8',
-      'Content-Length': experience.bytes.byteLength,
-      'Cache-Control': 'public, max-age=31536000, immutable',
-      'X-Content-Type-Options': 'nosniff',
-    })
-    response.end(experience.bytes)
-    return
-  }
-
   authorizeMutation(request)
   if (method === 'POST' && pathname === `${PREFIX}/import`) {
     const archive = await readBody(request, MAX_ARCHIVE_BYTES)

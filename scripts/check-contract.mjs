@@ -1,5 +1,5 @@
 /**
- * Contract gate for the single v3/current-DSH release line. It rejects removed
+ * Contract gate for the v4 declarative/current-DSH release line. It rejects removed
  * protocol type names and the retired storage namespace, then smoke-imports
  * the built host entry so missing/stale exports fail before publication.
  * It also rejects a browser bundle that hoists a require of any Node
@@ -17,6 +17,12 @@ const FORBIDDEN = [
   'ThemeLayerDefinition',
   'SkinManifestV1',
   'SkinManifestV2',
+  'SkinManifestV3',
+  'SkinExperience',
+  'component-experience',
+  'experience/client',
+  'dsh-client-modules',
+  "dshHomePath('skins-v3')",
   "dshHomePath('skins')",
 ]
 const SCANNED_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.yml', '.yaml'])
@@ -60,4 +66,4 @@ if (nodeRequires.length > 0) {
 
 const entry = resolve(ROOT, 'lib', 'index.js')
 await import(pathToFileURL(entry).href)
-console.log('contract gate: v3/current-DSH surface clean; no Node builtins in client bundle; lib/index.js imports cleanly')
+console.log('contract gate: v4 declarative/current-DSH surface clean; no Node builtins in client bundle; lib/index.js imports cleanly')

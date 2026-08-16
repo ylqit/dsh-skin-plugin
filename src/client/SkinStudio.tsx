@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { Button, Input, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SkinStudioInjected, StudioSnapshot } from './contracts.ts'
-import type { ThemeColorValue, ThemeLayerV2, ThemePartId, ThemePartStyle } from '../shared/contracts.ts'
+import { PLUGIN_VERSION, SKIN_SCHEMA_VERSION, type ThemeColorValue, type ThemeLayerV2, type ThemePartId, type ThemePartStyle, type VisualTemplateKind } from '../shared/contracts.ts'
 import { THEME_PART_GUIDES, type PartGuideGroup } from '../shared/part-guides.ts'
+import { VISUAL_SLOT_BY_PART, VISUAL_SLOT_CATALOG } from './visual-catalog.ts'
 import css from './SkinStudio.module.css'
 
 type SkinStudioProps = Omit<SkinStudioInjected, 'hooks'> & {
@@ -11,6 +12,7 @@ type SkinStudioProps = Omit<SkinStudioInjected, 'hooks'> & {
 
 type PrimaryTab = 'library' | 'editor'
 type EditorTab = 'components' | 'tokens' | 'backdrop'
+type ComponentTab = 'appearance' | 'visuals' | 'state'
 
 const EDITABLE_PART_FIELDS: readonly (keyof ThemePartStyle)[] = [
   'foreground', 'background', 'borderColor', 'borderWidthPx', 'borderRadiusPx',
@@ -27,6 +29,7 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
   const importRef = useRef<HTMLInputElement>(null)
   const [primaryTab, setPrimaryTab] = useState<PrimaryTab>('library')
   const [editorTab, setEditorTab] = useState<EditorTab>('components')
+  const [componentTab, setComponentTab] = useState<ComponentTab>('appearance')
   const [galleryMode, setGalleryMode] = useState<'light' | 'dark'>('light')
   const [part, setPart] = useState<ThemePartId>(state.parts[0]?.id ?? 'primitive.button')
   const [partSearch, setPartSearch] = useState('')
@@ -37,9 +40,18 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
   const [darkValue, setDarkValue] = useState('#7c9cff')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [visualTemplate, setVisualTemplate] = useState<VisualTemplateKind>('image-mark')
+  const [visualLabel, setVisualLabel] = useState('')
+  const [visualValue, setVisualValue] = useState('')
 
   const partInfo = state.parts.find(value => value.id === part)
   const guide = THEME_PART_GUIDES[part]
+  const visualSlot = VISUAL_SLOT_BY_PART[part]
+  const visualDefinition = visualSlot === undefined ? undefined : VISUAL_SLOT_CATALOG[visualSlot]
+  const visualItem = state.draftVisuals?.items.find(item => item.slot === visualSlot)
+  const rule = state.draft.partStyles?.find(value => value.part === part
+    && (value.variant ?? '') === variant
+    && (value.state ?? '') === partState)
   const tokenNames = useMemo(() => state.tokens.map(token => token.name).sort(), [state.tokens])
   const [tokenName, setTokenName] = useState(tokenNames[0] ?? '--dsw-alias-bg-base')
   const token = state.draft.tokens[tokenName] ?? { light: '#ffffff', dark: '#111827' }
@@ -57,6 +69,8 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
   }, [partSearch, state.parts])
   const partEnabled = state.draft.partStyles?.some(rule => rule.part === part) === true
   const partAvailable = isPartPresent(part)
+  const supportsSurface = partInfo?.properties.includes('surfaceImage') === true
+  const guideParts = state.parts.filter(value => THEME_PART_GUIDES[value.id].filename === guide.filename)
 
   useEffect(() => {
     if (!state.dirty) return
@@ -72,21 +86,24 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
   }, [field, partInfo, partState, variant])
 
   useEffect(() => {
-    const rule = state.draft.partStyles?.find(value => value.part === part
-      && (value.variant ?? '') === variant
-      && (value.state ?? '') === partState)
     setLightValue(displayPartValue(rule?.style.light[field]))
     setDarkValue(displayPartValue(rule?.style.dark[field]))
-  }, [field, part, partState, state.draft.partStyles, variant])
+  }, [field, rule])
 
-  const manageDisabled = !state.localManagement || state.busy
+  useEffect(() => {
+    setVisualTemplate(visualItem?.template ?? visualDefinition?.templates[0] ?? 'image-mark')
+    setVisualLabel(visualItem?.label ?? '')
+    setVisualValue(visualItem?.value ?? '')
+  }, [visualDefinition, visualItem])
+
+  const manageDisabled = !state.localManagement || state.busy || state.versionMismatch !== undefined
   return (
-    <section className={css.studio} data-dsh-theme-part="settings.panel">
+    <section className={css.studio} data-dsh-skin-studio data-dsh-theme-part="settings.panel">
       {state.previewing && <button type="button" style={EMERGENCY_EXIT_STYLE} onClick={props.cancelPreview}>退出全页试穿</button>}
 
       <header className={css.header}>
         <div className={css.headerCopy}>
-          <span className={css.eyebrow}>DSH SKIN STUDIO</span>
+          <span className={css.eyebrow}>插件 {PLUGIN_VERSION} · 协议 v{SKIN_SCHEMA_VERSION}</span>
           <div className={css.titleLine}>
             <h2 className={css.title}>组件换肤工作室</h2>
             <span className={css.authority} data-local={state.localManagement || undefined}>{state.localManagement ? '本机可管理' : '远程只读'}</span>
@@ -96,6 +113,7 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
         <span className={css.revision}>revision {state.host?.activationRevision ?? '—'}</span>
       </header>
 
+      {state.versionMismatch !== undefined && <div className={css.error} role="alert">{state.versionMismatch} 请重启 DSH 并刷新页面后再编辑。</div>}
       {state.error !== undefined && <div className={css.error} role="alert">{state.error}</div>}
 
       <div className={css.primaryTabs} role="tablist" aria-label="换肤工作台">
@@ -145,14 +163,14 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
                             <summary>查看能力与组件范围</summary>
                             <dl>
                               <div><dt>capabilities</dt><dd>{skin.capabilities.join('、') || '—'}</dd></div>
-                              <div><dt>placements</dt><dd>{skin.experience?.placements.join('、') || '—'}</dd></div>
+                              <div><dt>视觉槽位</dt><dd>{skin.visualSlots.join('、') || '—'}</dd></div>
                               <div><dt>parts</dt><dd>{skin.parts.join('、') || '—'}</dd></div>
                               <div><dt>fingerprint</dt><dd><code>{skin.fingerprint}</code></dd></div>
                             </dl>
                           </details>
                         </div>
                         <div className={css.rowActions}>
-                          <Button variant="ghost" size="sm" disabled={!state.localManagement || state.busy} onClick={() => { props.beginDraft(skin.fingerprint); setPrimaryTab('editor') }}>编辑与试穿</Button>
+                          <Button variant="ghost" size="sm" disabled={manageDisabled} onClick={() => { props.beginDraft(skin.fingerprint); setPrimaryTab('editor') }}>编辑与试穿</Button>
                           {!active && <Button variant="primary" size="sm" disabled={manageDisabled} onClick={() => { props.activate(skin.fingerprint) }}>激活</Button>}
                           {!active && skin.source === 'local' && skin.fingerprint !== state.host?.previousConfirmed && <Button variant="ghost" size="sm" disabled={manageDisabled} onClick={() => { props.deleteSkin(skin.fingerprint) }}>删除</Button>}
                         </div>
@@ -165,8 +183,8 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
       </section>
 
       <section id="skin-editor-panel" role="tabpanel" aria-labelledby="skin-primary-editor" hidden={primaryTab !== 'editor'} className={css.primaryPanel}>
-        <div className={css.editorToolbar} aria-disabled={!state.localManagement || undefined}>
-          <label className={css.draftName}>名称<Input value={state.draftName} disabled={!state.localManagement} onChange={event => { props.updateDraftName(event.currentTarget.value) }} /></label>
+        <div className={css.editorToolbar} aria-disabled={manageDisabled || undefined}>
+          <label className={css.draftName}>名称<Input value={state.draftName} disabled={manageDisabled} onChange={event => { props.updateDraftName(event.currentTarget.value) }} /></label>
           <div className={css.toolbarActions}>
             <Button variant="outline" size="sm" onClick={() => { props.setColorScheme('light') }}>Light</Button>
             <Button variant="outline" size="sm" onClick={() => { props.setColorScheme('dark') }}>Dark</Button>
@@ -212,8 +230,11 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
 
             <div className={css.componentDetail}>
               <div className={css.componentHeading}>
-                <div><span>{guide.group}</span><h3>{guide.label}</h3><code>{part}</code></div>
-                <span className={css.statusBadge} data-part-availability data-available={partAvailable || undefined}>{partAvailable ? '当前页可见' : '当前页未出现'}</span>
+                <div data-component-title><span>{guide.group}</span><h3>{guide.label}</h3><code>{part}</code></div>
+                <div className={css.toolbarActions}>
+                  <span className={css.statusBadge} data-part-availability data-available={partAvailable || undefined}>{partAvailable ? '当前页可见' : '当前页未出现'}</span>
+                  <Button variant="outline" size="sm" disabled={!partAvailable} onClick={() => { locatePart(part) }}>在当前页面定位</Button>
+                </div>
               </div>
               <p className={css.purpose}>{guide.purpose}</p>
               {!partAvailable && <p className={css.notice}>当前页面暂无对应锚点；仍可编辑并保存，进入对应页面后自动生效。</p>}
@@ -221,34 +242,68 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
               <figure className={css.guideFigure}>
                 <div className={css.guideCanvas}>
                   <img data-part-guide src={`/api/dsh-skin/guides/${guide.filename}`} alt={`DSH 实景导览：${guide.label}`} />
+                  {guideParts.map((candidate) => {
+                    const hotspot = THEME_PART_GUIDES[candidate.id]
+                    return <button key={candidate.id} type="button" data-part-hotspot={candidate.id} className={css.guideHotspot} aria-label={`选择 ${hotspot.label}`} title={`${hotspot.label} · ${candidate.id}`} style={{ left: `${hotspot.highlight.x * 100}%`, top: `${hotspot.highlight.y * 100}%`, width: `${hotspot.highlight.width * 100}%`, height: `${hotspot.highlight.height * 100}%` }} onClick={() => { setPart(candidate.id) }} />
+                  })}
                   <span data-part-highlight aria-hidden="true" className={css.guideHighlight} style={{ left: `${guide.highlight.x * 100}%`, top: `${guide.highlight.y * 100}%`, width: `${guide.highlight.width * 100}%`, height: `${guide.highlight.height * 100}%` }} />
                 </div>
-                <figcaption>真实 DSH 页面位置 · 高亮区域为当前 Part</figcaption>
+                <figcaption>点击高亮区域选择组件 · 当前选中：{guide.label}</figcaption>
               </figure>
 
-              <div className={css.propertyGrid}>
-                <label className={css.fieldLabel}>Variant<select value={variant} disabled={!state.localManagement} onChange={event => { setVariant(event.currentTarget.value) }}><option value="">默认</option>{partInfo?.variants.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-                <label className={css.fieldLabel}>State<select value={partState} disabled={!state.localManagement} onChange={event => { setPartState(event.currentTarget.value) }}><option value="">默认</option>{partInfo?.states.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-                <label className={css.fieldLabel}>属性<select value={field} disabled={!state.localManagement} onChange={event => { setField(event.currentTarget.value as keyof ThemePartStyle) }}>{EDITABLE_PART_FIELDS.filter(value => partInfo?.properties.includes(value) === true).map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-              </div>
-              <ModeFields disabled={!state.localManagement} light={lightValue} dark={darkValue} onLight={setLightValue} onDark={setDarkValue} />
-              <div className={css.toolbarActions}>
-                <Button variant="primary" size="sm" disabled={manageDisabled} onClick={() => { props.upsertPartRule(part, variant, partState, field, lightValue, darkValue) }}>应用完整规则</Button>
-                <Button variant="outline" size="sm" disabled={manageDisabled} onClick={() => { props.resetPartProperty(part, variant, partState, field) }}>重置当前属性</Button>
-                <Button variant="ghost" size="sm" disabled={manageDisabled} onClick={() => { props.setPartEnabled(part, !partEnabled) }}>{partEnabled ? '恢复 DSH 默认' : '启用组件换肤'}</Button>
+              <div className={css.componentTabs} role="tablist" aria-label="组件编辑分类">
+                {([['appearance', '外观'], ['visuals', '图片与图标'], ['state', '状态']] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={componentTab === id} tabIndex={componentTab === id ? 0 : -1} onKeyDown={handleTabKey} onClick={() => { setComponentTab(id) }}>{label}</button>)}
               </div>
 
-              <div className={css.assetFields}>
-                {(['light', 'dark'] as const).map(mode => <label key={mode} className={css.fieldLabel}>{mode === 'light' ? 'Light' : 'Dark'} 组件背景素材<input type="file" accept="image/png,image/jpeg,image/webp" disabled={!state.localManagement || partInfo?.properties.includes('surfaceImage') !== true} onChange={(event) => {
-                  const file = event.currentTarget.files?.[0]
-                  if (file !== undefined) props.updatePartSurfaceImage(part, variant, partState, mode, file)
-                  event.currentTarget.value = ''
-                }} /></label>)}
-              </div>
+              <section hidden={componentTab !== 'appearance'} className={css.componentEditorPanel}>
+                <div className={css.propertyGrid}>
+                  <label className={css.fieldLabel}>外观属性<select value={field} disabled={manageDisabled} onChange={event => { setField(event.currentTarget.value as keyof ThemePartStyle) }}>{EDITABLE_PART_FIELDS.filter(value => partInfo?.properties.includes(value) === true).map(value => <option key={value} value={value}>{appearanceLabel(value)}</option>)}</select></label>
+                </div>
+                <AppearanceFields field={field} disabled={manageDisabled} light={lightValue} dark={darkValue} onLight={setLightValue} onDark={setDarkValue} />
+                <div className={css.toolbarActions}>
+                  <Button variant="primary" size="sm" disabled={manageDisabled} onClick={() => { props.upsertPartRule(part, variant, partState, field, lightValue, darkValue) }}>应用外观</Button>
+                  <Button variant="outline" size="sm" disabled={manageDisabled} onClick={() => { props.resetPartProperty(part, variant, partState, field) }}>重置当前属性</Button>
+                </div>
+              </section>
 
-              <div className={css.componentPreviewGrid}>
-                {(['light', 'dark'] as const).map(mode => <div key={mode} data-dsh-theme-preview-mode={mode}><span>{mode === 'light' ? 'Light' : 'Dark'} 局部预览</span><div data-dsh-theme-part={part} data-dsh-theme-variant={variant || undefined} data-dsh-theme-state={partState || undefined}>{guide.label}</div></div>)}
-              </div>
+              <section hidden={componentTab !== 'visuals'} className={css.componentEditorPanel}>
+                {supportsSurface && <section className={css.assetSection}>
+                  <div className={css.sectionHeading}><div><h4>组件表面图</h4><p>受控背景图不会改变组件结构或交互。</p></div><span>推荐：1600 × 900 px</span></div>
+                  <div className={css.assetCards}>{(['light', 'dark'] as const).map(mode => <ImageAssetEditor key={mode} mode={mode} kind="组件表面" assetUrl={rule?.style[mode].surfaceImage?.assetUrl} fit={rule?.style[mode].surfaceImage?.fit} positionX={rule?.style[mode].surfaceImage?.positionX} positionY={rule?.style[mode].surfaceImage?.positionY} disabled={manageDisabled} onFile={file => { props.updatePartSurfaceImage(part, variant, partState, mode, file) }} onRemove={() => { props.removePartSurfaceImage(part, variant, partState, mode) }} onSetting={(nextField, value) => { props.updatePartSurfaceSettings(part, variant, partState, mode, nextField, value) }} />)}</div>
+                </section>}
+
+                {visualDefinition !== undefined && visualSlot !== undefined && <section className={css.assetSection}>
+                  <div className={css.sectionHeading}><div><h4>{visualDefinition.label}</h4><p>{visualDefinition.purpose}。功能性图标不可替换。</p></div><span>推荐尺寸：{visualDefinition.recommendedSize}</span></div>
+                  <div className={css.visualConfigurator}>
+                    <label className={css.fieldLabel}>固定模板<select value={visualTemplate} disabled={manageDisabled} onChange={event => { setVisualTemplate(event.currentTarget.value as VisualTemplateKind) }}>{visualDefinition.templates.map(value => <option key={value} value={value}>{visualTemplateLabel(value)}</option>)}</select></label>
+                    {visualTemplate !== 'image-mark' && <label className={css.fieldLabel}>显示文字<Input value={visualLabel} disabled={manageDisabled} onChange={event => { setVisualLabel(event.currentTarget.value) }} /></label>}
+                    {visualTemplate === 'status-chip' && <label className={css.fieldLabel}>状态值<Input value={visualValue} disabled={manageDisabled} onChange={event => { setVisualValue(event.currentTarget.value) }} /></label>}
+                    <Button variant="primary" size="sm" disabled={manageDisabled} onClick={() => { props.configureVisual(visualSlot, visualTemplate, visualLabel, visualValue) }}>{visualItem === undefined ? '启用小组件' : '应用模板设置'}</Button>
+                    {visualItem !== undefined && <Button variant="ghost" size="sm" disabled={manageDisabled} onClick={() => { props.removeVisual(visualSlot) }}>恢复该槽位默认</Button>}
+                  </div>
+                  {visualItem !== undefined && <div className={css.modeFields}>{(['light', 'dark'] as const).map(mode => <fieldset key={mode} className={css.visualColors} disabled={manageDisabled}><legend>{mode === 'light' ? 'Light' : 'Dark'} 小组件颜色</legend>{visualTemplate !== 'image-mark' && <label>文字<Input value={displayColor(visualItem.modes[mode].foreground ?? '#1f2937')} onChange={event => { props.updateVisualMode(visualSlot, mode, 'foreground', event.currentTarget.value) }} /></label>}<label>表面<Input value={displayColor(visualItem.modes[mode].background ?? '#ffffffcc')} onChange={event => { props.updateVisualMode(visualSlot, mode, 'background', event.currentTarget.value) }} /></label></fieldset>)}</div>}
+                  <div className={css.assetCards}>{(['light', 'dark'] as const).map(mode => <ImageAssetEditor key={mode} mode={mode} kind="装饰素材" marker="visual" assetUrl={visualItem?.modes[mode].assetUrl} fit={visualItem?.modes[mode].fit} positionX={visualItem?.modes[mode].positionX} positionY={visualItem?.modes[mode].positionY} disabled={manageDisabled || visualItem === undefined} onFile={file => { props.updateVisualImage(visualSlot, mode, file) }} onRemove={() => { props.removeVisualImage(visualSlot, mode) }} onSetting={(nextField, value) => { props.updateVisualMode(visualSlot, mode, nextField, value) }} />)}</div>
+                </section>}
+
+                {!supportsSurface && visualDefinition === undefined && <div className={css.unsupported} data-visual-unsupported><strong>此组件不开放图片或装饰图标</strong><p>该区域包含功能性图标或没有安全的视觉槽位；仍可在“外观”中调整允许的颜色、边框与圆角。</p></div>}
+              </section>
+
+              <section hidden={componentTab !== 'state'} className={css.componentEditorPanel}>
+                <div className={css.propertyGrid}>
+                  <label className={css.fieldLabel}>Variant<select value={variant} disabled={manageDisabled} onChange={event => { setVariant(event.currentTarget.value) }}><option value="">默认</option>{partInfo?.variants.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+                  <label className={css.fieldLabel}>State<select value={partState} disabled={manageDisabled} onChange={event => { setPartState(event.currentTarget.value) }}><option value="">默认</option>{partInfo?.states.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+                </div>
+                <div className={css.stateSummary}><span>当前规则</span><strong>{partEnabled ? '已启用组件换肤' : '使用 DSH 默认'}</strong><code>{variant || 'default'} · {partState || 'base'}</code></div>
+                <div className={css.toolbarActions}><Button variant="ghost" size="sm" disabled={manageDisabled} onClick={() => { props.setPartEnabled(part, !partEnabled) }}>{partEnabled ? '恢复 DSH 默认' : '启用组件换肤'}</Button></div>
+              </section>
+
+              <section className={css.previewComparison} aria-label="组件效果对照">
+                <h4>效果对照</h4>
+                <div className={css.componentPreviewGrid}>
+                  <div><span>DSH 原始效果</span><div>{guide.label}</div></div>
+                  {(['light', 'dark'] as const).map(mode => <div key={mode} data-dsh-theme-preview-mode={mode}><span>{mode === 'light' ? 'Light' : 'Dark'} 修改后</span><div data-dsh-theme-part={part} data-dsh-theme-variant={variant || undefined} data-dsh-theme-state={partState || undefined}>{guide.label}</div></div>)}
+                </div>
+              </section>
 
               <details className={css.previewDetails}>
                 <summary>打开综合组件预览</summary>
@@ -268,20 +323,20 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
             <div className={css.panelHeading}><h3>色彩 Token</h3><p>同时维护 Light 与 Dark 值，确保模式切换完整。</p></div>
             <label className={css.fieldLabel}>Token<select value={tokenName} disabled={!state.localManagement} onChange={event => { setTokenName(event.currentTarget.value) }}>{tokenNames.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
             <p className={css.purpose}>{state.tokens.find(value => value.name === tokenName)?.description ?? '语义色彩变量'}</p>
-            <ModeFields disabled={!state.localManagement} light={token.light} dark={token.dark} onLight={value => { props.updateToken(tokenName, 'light', value) }} onDark={value => { props.updateToken(tokenName, 'dark', value) }} />
+            <ModeFields disabled={manageDisabled} light={token.light} dark={token.dark} onLight={value => { props.updateToken(tokenName, 'light', value) }} onDark={value => { props.updateToken(tokenName, 'dark', value) }} />
           </div>
         </section>
 
         <section id="skin-editor-backdrop-panel" role="tabpanel" aria-labelledby="skin-editor-backdrop" hidden={editorTab !== 'backdrop'} className={css.editorContent}>
           <div className={css.scrollPanel}>
             <div className={css.panelHeading}><h3>背景焦点与遮罩</h3><p>上传本地安全素材，并分别调整两种模式的焦点和可读性遮罩。</p></div>
-            <div className={css.assetFields}>{(['light', 'dark'] as const).map(mode => <label key={mode} className={css.fieldLabel}>{mode === 'light' ? 'Light' : 'Dark'} 背景 / 卡片封面<input type="file" accept="image/png,image/jpeg,image/webp" disabled={!state.localManagement} onChange={(event) => {
+            <div className={css.assetFields}>{(['light', 'dark'] as const).map(mode => <label key={mode} className={css.fieldLabel}>{mode === 'light' ? 'Light' : 'Dark'} 背景 / 卡片封面<input type="file" accept="image/png,image/jpeg,image/webp" disabled={manageDisabled} onChange={(event) => {
               const file = event.currentTarget.files?.[0]
               if (file !== undefined) props.updateBackdropImage(mode, file)
               event.currentTarget.value = ''
             }} /></label>)}</div>
-            <BackdropFields mode="light" values={backdrop.light} disabled={!state.localManagement} update={(nextField, value) => { props.updateBackdrop('light', nextField, value) }} />
-            <BackdropFields mode="dark" values={backdrop.dark} disabled={!state.localManagement} update={(nextField, value) => { props.updateBackdrop('dark', nextField, value) }} />
+            <BackdropFields mode="light" values={backdrop.light} disabled={manageDisabled} update={(nextField, value) => { props.updateBackdrop('light', nextField, value) }} />
+            <BackdropFields mode="dark" values={backdrop.dark} disabled={manageDisabled} update={(nextField, value) => { props.updateBackdrop('dark', nextField, value) }} />
           </div>
         </section>
       </section>
@@ -317,7 +372,84 @@ function handleTabKey(event: KeyboardEvent<HTMLButtonElement>): void {
 function isPartPresent(part: ThemePartId): boolean {
   if (typeof document === 'undefined') return false
   return Array.from(document.querySelectorAll(`[data-dsh-theme-part="${part}"]`))
-    .some(element => element.closest('[data-dsh-theme-preview-mode]') === null)
+    .some(element => element.closest('[data-dsh-theme-preview-mode], [data-dsh-skin-studio]') === null)
+}
+
+function locatePart(part: ThemePartId): void {
+  const target = Array.from(document.querySelectorAll<HTMLElement>(`[data-dsh-theme-part="${part}"]`))
+    .find(element => element.closest('[data-dsh-theme-preview-mode], [data-dsh-skin-studio]') === null)
+  if (target === undefined) return
+  target.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' })
+  target.dataset.dshSkinLocating = 'true'
+  window.setTimeout(() => { delete target.dataset.dshSkinLocating }, 1800)
+}
+
+function AppearanceFields({ field, disabled, light, dark, onLight, onDark }: {
+  field: keyof ThemePartStyle; disabled: boolean; light: string; dark: string
+  onLight: (value: string) => void; onDark: (value: string) => void
+}): ReactNode {
+  const numeric = numericRange(field)
+  if (numeric !== undefined) return <div className={css.modeFields}>{([['Light', light, onLight], ['Dark', dark, onDark]] as const).map(([label, value, update]) => <label key={label} className={css.fieldLabel}>{label}<span className={css.rangeField}><input type="range" min={numeric.min} max={numeric.max} step={numeric.step} value={value === '' ? numeric.fallback : value} disabled={disabled} onChange={event => { update(event.currentTarget.value) }} /><Input value={value} disabled={disabled} onChange={event => { update(event.currentTarget.value) }} /></span></label>)}</div>
+  if (field === 'borderStyle') return <SelectModes disabled={disabled} light={light} dark={dark} values={['none', 'solid', 'dashed', 'dotted']} onLight={onLight} onDark={onDark} />
+  if (field === 'fontFamily') return <SelectModes disabled={disabled} light={light} dark={dark} values={['system-sans', 'rounded', 'serif', 'monospace']} onLight={onLight} onDark={onDark} />
+  if (field === 'shadows') return <SelectModes disabled={disabled} light={light} dark={dark} values={['[]', '[{"xPx":0,"yPx":8,"blurPx":24,"spreadPx":0,"color":"#0f172a1f"}]', '[{"xPx":0,"yPx":14,"blurPx":36,"spreadPx":0,"color":"#0f172a33"}]']} labels={['无阴影', '轻柔阴影', '强调阴影']} onLight={onLight} onDark={onDark} />
+  const color = field === 'foreground' || field === 'background' || field === 'borderColor'
+  return <div className={css.modeFields}>{([['Light', light, onLight], ['Dark', dark, onDark]] as const).map(([label, value, update]) => <label key={label} className={css.fieldLabel}>{label}<span className={css.valueField}>{color && /^#[a-f0-9]{6}$/iu.test(value) && <input type="color" aria-label={`${label} 取色`} value={value} disabled={disabled} onChange={event => { update(event.currentTarget.value) }} />}<Input value={value} disabled={disabled} onChange={event => { update(event.currentTarget.value) }} /></span></label>)}</div>
+}
+
+function SelectModes({ disabled, light, dark, values, labels = values, onLight, onDark }: {
+  disabled: boolean; light: string; dark: string; values: readonly string[]; labels?: readonly string[]
+  onLight: (value: string) => void; onDark: (value: string) => void
+}): ReactNode {
+  return <div className={css.modeFields}>{([['Light', light, onLight], ['Dark', dark, onDark]] as const).map(([mode, value, update]) => <label key={mode} className={css.fieldLabel}>{mode}<select value={value} disabled={disabled} onChange={event => { update(event.currentTarget.value) }}>{values.map((option, index) => <option key={option} value={option}>{labels[index] ?? option}</option>)}</select></label>)}</div>
+}
+
+function ImageAssetEditor({ mode, kind, marker, assetUrl, fit: configuredFit, positionX: configuredX, positionY: configuredY, disabled, onFile, onRemove, onSetting }: {
+  mode: 'light' | 'dark'; kind: '组件表面' | '装饰素材'; marker?: 'visual'; assetUrl: string | undefined
+  fit: 'cover' | 'contain' | undefined; positionX: number | undefined; positionY: number | undefined; disabled: boolean
+  onFile: (file: File) => void; onRemove: () => void
+  onSetting: (field: 'fit' | 'positionX' | 'positionY', value: string) => void
+}): ReactNode {
+  const fit = configuredFit ?? 'contain'
+  const positionX = configuredX ?? 0.5
+  const positionY = configuredY ?? 0.5
+  const label = mode === 'light' ? 'Light' : 'Dark'
+  const accept = (files: FileList | null): void => { const file = files?.[0]; if (file !== undefined) onFile(file) }
+  return <article className={css.assetCard}>
+    <header><strong>{label}</strong><span>{assetUrl === undefined ? '未设置' : '已设置'}</span></header>
+    <div className={css.assetPreview}>{assetUrl === undefined ? <p>选择本地 PNG、JPEG 或 WebP</p> : <img {...(marker === undefined ? { 'data-current-surface': mode } : { 'data-current-visual': mode })} src={assetUrl} alt={`${label} ${kind}预览`} style={{ objectFit: fit, objectPosition: `${positionX * 100}% ${positionY * 100}%` }} />}</div>
+    <label className={css.dropZone} onDragOver={event => { event.preventDefault() }} onDrop={event => { event.preventDefault(); if (!disabled) accept(event.dataTransfer.files) }}>{assetUrl === undefined ? '拖放或选择素材' : '替换素材'}<input aria-label={`${label} ${kind}`} type="file" accept="image/png,image/jpeg,image/webp" disabled={disabled} onChange={event => { accept(event.currentTarget.files); event.currentTarget.value = '' }} /></label>
+    {assetUrl !== undefined && <div className={css.assetControls}>
+      <label>适配<select value={fit} disabled={disabled} onChange={event => { onSetting('fit', event.currentTarget.value) }}><option value="cover">cover</option><option value="contain">contain</option></select></label>
+      <label>焦点 X<input type="range" min="0" max="1" step="0.01" value={positionX} disabled={disabled} onChange={event => { onSetting('positionX', event.currentTarget.value) }} /></label>
+      <label>焦点 Y<input type="range" min="0" max="1" step="0.01" value={positionY} disabled={disabled} onChange={event => { onSetting('positionY', event.currentTarget.value) }} /></label>
+      <Button variant="ghost" size="sm" disabled={disabled} onClick={onRemove}>删除素材</Button>
+    </div>}
+  </article>
+}
+
+function numericRange(field: keyof ThemePartStyle): { min: number; max: number; step: number; fallback: number } | undefined {
+  if (field === 'opacity') return { min: 0, max: 1, step: 0.01, fallback: 1 }
+  if (field === 'backdropBlurPx') return { min: 0, max: 40, step: 1, fallback: 0 }
+  if (field === 'borderRadiusPx') return { min: 0, max: 48, step: 1, fallback: 12 }
+  if (field === 'borderWidthPx') return { min: 0, max: 8, step: 1, fallback: 1 }
+  if (field === 'paddingBlockPx' || field === 'paddingInlinePx' || field === 'gapPx') return { min: 0, max: 48, step: 1, fallback: 8 }
+  if (field === 'fontSizePx') return { min: 10, max: 36, step: 1, fallback: 14 }
+  if (field === 'fontWeight') return { min: 400, max: 700, step: 100, fallback: 500 }
+  if (field === 'lineHeight') return { min: 1, max: 2, step: 0.05, fallback: 1.4 }
+  if (field === 'letterSpacingPx') return { min: -2, max: 8, step: 0.1, fallback: 0 }
+  if (field === 'transitionDurationMs') return { min: 0, max: 600, step: 25, fallback: 150 }
+  return undefined
+}
+
+function appearanceLabel(field: keyof ThemePartStyle): string {
+  return ({ foreground: '文字颜色', background: '背景颜色', borderColor: '边框颜色', borderWidthPx: '边框宽度', borderStyle: '边框样式', borderRadiusPx: '圆角', shadows: '阴影', opacity: '透明度', backdropBlurPx: '背景模糊', paddingBlockPx: '纵向内边距', paddingInlinePx: '横向内边距', gapPx: '间距', fontFamily: '字体', fontSizePx: '字号', fontWeight: '字重', lineHeight: '行高', letterSpacingPx: '字距', transitionDurationMs: '过渡时长', surfaceImage: '表面图' } as const)[field]
+}
+
+function visualTemplateLabel(template: VisualTemplateKind): string {
+  if (template === 'compact-brand') return '紧凑品牌'
+  if (template === 'status-chip') return '状态标签'
+  return '图片标志'
 }
 
 function ModeFields({ disabled, light, dark, onLight, onDark }: { disabled: boolean; light: string; dark: string; onLight: (value: string) => void; onDark: (value: string) => void }): ReactNode {

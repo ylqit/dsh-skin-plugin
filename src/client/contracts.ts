@@ -1,7 +1,6 @@
 import type {
-  SkinHostState, ThemeLayerV2, ThemePartInspection, ThemeTokenInspection,
+  SkinHostState, SkinVisualsV1, ThemeLayerV2, ThemePartInspection, ThemeTokenInspection,
 } from '../shared/contracts.ts'
-import type { ClientModuleService } from './experience-runtime.ts'
 
 export interface HostObservable<T> {
   getSnapshot(): T
@@ -23,7 +22,6 @@ export interface ThemeService {
 
 export interface ClientContext {
   theme: ThemeService
-  modules: ClientModuleService
   connection: { isLoopback: boolean }
   slots: {
     inject(name: string, callback: () => (() => void)): () => void
@@ -36,6 +34,7 @@ export interface ClientContext {
 export interface StudioSnapshot {
   host: SkinHostState | undefined
   draft: ThemeLayerV2
+  draftVisuals: SkinVisualsV1 | undefined
   draftName: string
   busy: boolean
   previewing: boolean
@@ -44,6 +43,7 @@ export interface StudioSnapshot {
   canRedo: boolean
   changes: readonly string[]
   localManagement: boolean
+  versionMismatch: string | undefined
   error: string | undefined
   tokens: readonly ThemeTokenInspection[]
   parts: readonly ThemePartInspection[]
@@ -60,6 +60,13 @@ export interface SkinStudioInjected {
   setPartEnabled(part: string, enabled: boolean): void
   resetPartProperty(part: string, variant: string, state: string, field: keyof import('../shared/contracts.ts').ThemePartStyle): void
   updatePartSurfaceImage(part: string, variant: string, state: string, mode: 'light' | 'dark', file: File): void
+  updatePartSurfaceSettings(part: string, variant: string, state: string, mode: 'light' | 'dark', field: 'fit' | 'positionX' | 'positionY', value: string): void
+  removePartSurfaceImage(part: string, variant: string, state: string, mode: 'light' | 'dark'): void
+  configureVisual(slot: import('../shared/contracts.ts').VisualSlotId, template: import('../shared/contracts.ts').VisualTemplateKind, label: string, value: string): void
+  updateVisualMode(slot: import('../shared/contracts.ts').VisualSlotId, mode: 'light' | 'dark', field: 'foreground' | 'background' | 'fit' | 'positionX' | 'positionY', value: string): void
+  updateVisualImage(slot: import('../shared/contracts.ts').VisualSlotId, mode: 'light' | 'dark', file: File): void
+  removeVisualImage(slot: import('../shared/contracts.ts').VisualSlotId, mode: 'light' | 'dark'): void
+  removeVisual(slot: import('../shared/contracts.ts').VisualSlotId): void
   undo(): void
   redo(): void
   importSkin(file: File): void

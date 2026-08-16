@@ -35,9 +35,12 @@ function buildShellFixture(): void {
   conversationScroll.setAttribute('data-conversation-scroll', '')
   const composer = document.createElement('div')
   composer.setAttribute('data-composer-seat', '')
+  const card = document.createElement('div')
+  card.setAttribute('data-composer-card', 'true')
   const textarea = document.createElement('textarea')
   const toolbarButton = document.createElement('button')
-  composer.append(textarea, toolbarButton)
+  card.append(textarea, toolbarButton)
+  composer.append(card)
   conversationScroll.append(composer)
   conversation.append(conversationScroll)
   conversationSlot.append(conversation)
@@ -82,7 +85,8 @@ describe('part anchor shim', () => {
     expect(details.getAttribute(PART)).toBe('shell.details')
     expect(conversationRoot?.getAttribute(PART)).toBe('conversation.root')
     expect(conversationSlot?.getAttribute(PART)).toBeNull()
-    expect(document.querySelector('textarea')?.parentElement?.getAttribute(PART)).toBe('conversation.composer')
+    expect(document.querySelector('[data-composer-seat]')?.getAttribute(PART)).toBeNull()
+    expect(document.querySelector('[data-composer-card="true"]')?.getAttribute(PART)).toBe('conversation.composer')
     for (const button of document.querySelectorAll('button')) {
       expect(button.getAttribute(PART)).toBe('primitive.button')
     }
@@ -130,7 +134,9 @@ describe('part anchor shim', () => {
                   <header>Conversation</header>
                   <div data-conversation-scroll>
                     <div data-chat-anchor-key="m1" data-chat-flow-kind="user-message"><div>hello</div></div>
-                    <div data-composer-seat><textarea></textarea><button>send</button></div>
+                    <div data-composer-seat>
+                      <div data-composer-card="true"><textarea></textarea><button>send</button></div>
+                    </div>
                     <div data-variant="others" data-state="running">tool</div>
                   </div>
                 </div>
@@ -156,7 +162,8 @@ describe('part anchor shim', () => {
     expect(document.querySelector('#input-phase')?.getAttribute(PART)).toBe('primitive.input')
     expect(document.querySelector('header')?.getAttribute(PART)).toBe('conversation.header')
     expect(document.querySelector('[data-conversation-scroll]')?.getAttribute(PART)).toBe('conversation.scroller')
-    expect(document.querySelector('[data-composer-seat]')?.getAttribute(PART)).toBe('conversation.composer')
+    expect(document.querySelector('[data-composer-seat]')?.getAttribute(PART)).toBeNull()
+    expect(document.querySelector('[data-composer-card="true"]')?.getAttribute(PART)).toBe('conversation.composer')
     expect(document.querySelector('[data-chat-anchor-key]')).toMatchObject({
       dataset: expect.objectContaining({ dshThemePart: 'conversation.message', dshThemeVariant: 'user' }),
     })
@@ -363,7 +370,9 @@ describe('part anchor shim', () => {
       <div id="decoy-conversation" data-slot="conversation">
         <div data-phase="active">
           <div data-conversation-scroll>
-            <div data-composer-seat><textarea></textarea><button>send</button></div>
+            <div data-composer-seat>
+              <div data-composer-card="true"><textarea></textarea><button>send</button></div>
+            </div>
           </div>
         </div>
       </div>
@@ -375,9 +384,11 @@ describe('part anchor shim', () => {
     const center = frame.children[1] as HTMLElement
     expect(center.querySelector('[data-phase]')?.getAttribute(PART)).toBe('conversation.root')
     expect(center.querySelector('[data-conversation-scroll]')?.getAttribute(PART)).toBe('conversation.scroller')
-    expect(center.querySelector('[data-composer-seat]')?.getAttribute(PART)).toBe('conversation.composer')
+    expect(center.querySelector('[data-composer-seat]')?.getAttribute(PART)).toBeNull()
+    expect(center.querySelector('[data-composer-card="true"]')?.getAttribute(PART)).toBe('conversation.composer')
     expect(document.querySelector('#decoy-conversation [data-phase]')?.getAttribute(PART)).toBeNull()
     expect(document.querySelector('#decoy-conversation [data-conversation-scroll]')?.getAttribute(PART)).toBeNull()
     expect(document.querySelector('#decoy-conversation [data-composer-seat]')?.getAttribute(PART)).toBeNull()
+    expect(document.querySelector('#decoy-conversation [data-composer-card="true"]')?.getAttribute(PART)).toBeNull()
   })
 })

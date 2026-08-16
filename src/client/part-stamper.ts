@@ -146,11 +146,13 @@ function stampStructure(registry: StampedRegistry): void {
     stamp(registry, columns[2], 'shell.details')
     const center = columns[1]
     if (center !== undefined) {
-      stampComposer(center, (element, part) => { stamp(registry, element, part) })
       const conversation = center.querySelector('[data-slot="conversation"] > [data-phase]')
       stamp(registry, conversation, 'conversation.root')
       stamp(registry, conversation?.querySelector('[data-conversation-scroll]'), 'conversation.scroller')
-      stamp(registry, conversation?.querySelector('[data-composer-seat]'), 'conversation.composer')
+      // The seat spans the entire conversation column in the current DSH hero
+      // layout. Style only the semantic card so surface rules cannot turn the
+      // seat into a viewport-sized panel.
+      stamp(registry, conversation?.querySelector('[data-composer-card="true"]'), 'conversation.composer')
       if (conversation !== null) {
         const header = [...conversation.children].find(child => !child.hasAttribute('data-conversation-scroll'))
         stamp(registry, header, 'conversation.header')
@@ -291,23 +293,4 @@ function restoreSurface(element: HTMLElement, previous: string): void {
   if (element.style.background !== 'transparent') return
   if (previous === '') element.style.removeProperty('background')
   else element.style.background = previous
-}
-
-/** Composer: nearest textarea ancestor that also carries a toolbar button. */
-function stampComposer(
-  center: Element,
-  stamp: (element: Element | null | undefined, part: string) => void,
-): void {
-  for (const textarea of center.querySelectorAll('textarea')) {
-    let ancestor = textarea.parentElement
-    let depth = 0
-    while (ancestor !== null && ancestor !== center && depth < 6) {
-      if (ancestor.querySelector('button') !== null) {
-        stamp(ancestor, 'conversation.composer')
-        return
-      }
-      ancestor = ancestor.parentElement
-      depth += 1
-    }
-  }
 }

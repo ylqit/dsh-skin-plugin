@@ -20,6 +20,9 @@ const calls = {
   restoreDefault: vi.fn(),
   resumePreview: vi.fn(),
   setPartEnabled: vi.fn(),
+  configureVisual: vi.fn(),
+  updateVisualImage: vi.fn(),
+  removeVisual: vi.fn(),
 }
 
 const draft = {
@@ -31,6 +34,10 @@ const draft = {
 
 const snapshot: StudioSnapshot = {
   host: {
+    runtime: {
+      pluginVersion: '0.4.0',
+      compatibility: { dshVersion: '0.1.0-rc.5', skinSchemaVersion: 4, themeSchemaVersion: 2, themePartsVersion: 2, visualsSchemaVersion: 1 },
+    },
     activationRevision: 7,
     activeFingerprint: 'a'.repeat(64),
     skins: [
@@ -38,12 +45,13 @@ const snapshot: StudioSnapshot = {
         fingerprint: 'a'.repeat(64), id: 'bulbasaur-growth', name: '妙蛙种子生长舱', version: '2.0.0',
         capabilities: ['tokens', 'backdrop', 'component-parts'], source: 'builtin', tags: ['green'],
         description: '绿色植物界面', parts: ['shell.sidebar', 'conversation.composer'],
+        visualSlots: ['sidebar.brand-mark'],
         preview: { light: '/preview-light.webp', dark: '/preview-dark.webp' },
-        experience: { apiVersion: 1, moduleId: 'bulbasaur-growth', url: '/experience.js', rev: 'a'.repeat(64), placements: ['skin.sidebar.brand'], assets: {} },
       },
     ],
   },
   draft,
+  draftVisuals: undefined,
   draftName: '妙蛙种子副本',
   busy: false,
   previewing: false,
@@ -52,11 +60,14 @@ const snapshot: StudioSnapshot = {
   canRedo: false,
   changes: ['组件样式'],
   localManagement: true,
+  versionMismatch: undefined,
   error: undefined,
   tokens: [{ name: '--dsw-alias-bg-base', description: '基础背景', valueType: 'color', requiresLightAndDark: true }],
   parts: [
     { id: 'app.root', variants: [], states: [], properties: ['background'] },
+    { id: 'shell.sidebar', variants: ['default', 'compact'], states: ['collapsed'], properties: ['background', 'borderColor', 'backdropBlurPx'] },
     { id: 'conversation.composer', variants: ['default'], states: ['focus-visible'], properties: ['background', 'surfaceImage'] },
+    { id: 'primitive.button', variants: ['primary'], states: ['hover'], properties: ['background', 'borderRadiusPx'] },
     { id: 'primitive.menu-item', variants: ['default'], states: ['selected'], properties: ['foreground', 'background'] },
   ],
 }
@@ -83,6 +94,13 @@ async function renderStudio(overrides: Partial<StudioSnapshot> = {}): Promise<vo
     setPartEnabled: calls.setPartEnabled,
     resetPartProperty: vi.fn(),
     updatePartSurfaceImage: vi.fn(),
+    updatePartSurfaceSettings: vi.fn(),
+    removePartSurfaceImage: vi.fn(),
+    configureVisual: calls.configureVisual,
+    updateVisualMode: vi.fn(),
+    updateVisualImage: calls.updateVisualImage,
+    removeVisualImage: vi.fn(),
+    removeVisual: calls.removeVisual,
     undo: vi.fn(),
     redo: vi.fn(),
     importSkin: vi.fn(),
@@ -185,6 +203,64 @@ describe('SkinStudio workbench', () => {
     expect(calls.resumePreview).toHaveBeenCalledOnce()
     await act(async () => { button('启用组件换肤').click() })
     expect(calls.setPartEnabled).toHaveBeenCalledWith('app.root', true)
+  })
+
+  it('identifies plugin/protocol versions and blocks editing on Host mismatch', async () => {
+    await renderStudio({ versionMismatch: 'Host 0.3.1 与 Client 0.4.0 不一致' })
+    expect(container.textContent).toContain('插件 0.4.0 · 协议 v4')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('重启 DSH')
+    await act(async () => { button('编辑皮肤').click() })
+    expect(button('保存到 Host').disabled).toBe(true)
+  })
+
+  it('uses clickable guide hotspots and locates the real DSH component', async () => {
+    const sidebar = document.createElement('aside')
+    sidebar.dataset.dshThemePart = 'shell.sidebar'
+    sidebar.scrollIntoView = vi.fn()
+    document.body.append(sidebar)
+    try {
+      await renderStudio()
+      await act(async () => { button('编辑皮肤').click() })
+      const hotspot = container.querySelector<HTMLButtonElement>('[data-part-hotspot="shell.sidebar"]')
+      expect(hotspot).not.toBeNull()
+      await act(async () => { hotspot?.click() })
+      expect(container.querySelector('[data-component-title]')?.textContent).toContain('侧栏')
+      await act(async () => { button('在当前页面定位').click() })
+      expect(sidebar.scrollIntoView).toHaveBeenCalled()
+      expect(sidebar.dataset.dshSkinLocating).toBe('true')
+    } finally {
+      sidebar.remove()
+    }
+  })
+
+  it('separates appearance, image/visual and state editing with honest support messaging', async () => {
+    const draftVisuals = {
+      schemaVersion: 1,
+      items: [{
+        id: 'sidebar-brand-mark', slot: 'sidebar.brand-mark', template: 'compact-brand', label: '妙蛙种子',
+        modes: {
+          light: { assetUrl: 'blob:light-mark', fit: 'contain', positionX: 0.5, positionY: 0.5 },
+          dark: { assetUrl: 'blob:dark-mark', fit: 'contain', positionX: 0.5, positionY: 0.5 },
+        },
+      }],
+    } satisfies NonNullable<StudioSnapshot['draftVisuals']>
+    await renderStudio({ draftVisuals })
+    await act(async () => { button('编辑皮肤').click() })
+    const sidebarChoice = [...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Theme Parts v2 组件目录"] button')]
+      .find(element => element.textContent?.includes('shell.sidebar'))
+    await act(async () => { sidebarChoice?.click() })
+    const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tablist"][aria-label="组件编辑分类"] [role="tab"]')]
+    expect(tabs.map(tab => tab.textContent)).toEqual(['外观', '图片与图标', '状态'])
+    await act(async () => { tabs[1]?.click() })
+    expect(container.querySelector<HTMLImageElement>('img[data-current-visual="light"]')?.src).toContain('blob:light-mark')
+    expect(container.querySelector('input[aria-label="Light 装饰素材"]')).not.toBeNull()
+    expect(container.textContent).toContain('推荐尺寸')
+
+    const buttonChoice = [...container.querySelectorAll<HTMLButtonElement>('nav[aria-label="Theme Parts v2 组件目录"] button')]
+      .find(element => element.textContent?.includes('primitive.button'))
+    await act(async () => { buttonChoice?.click() })
+    expect(container.querySelector('[data-visual-unsupported]')?.textContent).toContain('不开放图片或装饰图标')
+    expect(container.querySelector('input[aria-label$="装饰素材"]')).toBeNull()
   })
 })
 

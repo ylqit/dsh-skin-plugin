@@ -242,7 +242,7 @@ function modePair<T>(value: unknown, subject: string, decode: (mode: unknown, su
   return Object.freeze({ light: decode(pair.light, `${subject}.light`), dark: decode(pair.dark, `${subject}.dark`) })
 }
 
-function color(value: unknown, subject: string): ThemeColorValue {
+export function validateThemeColorValue(value: unknown, subject: string): ThemeColorValue {
   if (typeof value === 'string') {
     const normalized = value.toLowerCase()
     if (!isColorLiteral(normalized)) throw new TypeError(`${subject} must be a supported CSS color literal`)
@@ -275,7 +275,7 @@ function shadow(value: unknown, subject: string): ThemeShadow {
     yPx: finite(source.yPx, `${subject}.yPx`, -32, 32),
     blurPx: finite(source.blurPx, `${subject}.blurPx`, 0, 30),
     spreadPx: finite(source.spreadPx, `${subject}.spreadPx`, -8, 16),
-    color: color(source.color, `${subject}.color`),
+    color: validateThemeColorValue(source.color, `${subject}.color`),
   })
 }
 
@@ -300,9 +300,9 @@ function partStyle(value: unknown, subject: string, allowed: ReadonlySet<string>
   const disallowed = Object.keys(source).find(key => !allowed.has(key))
   if (disallowed !== undefined) throw new TypeError(`${subject}.${disallowed} is not available for this part`)
   const output: ThemePartStyle = {}
-  if (source.foreground !== undefined) output.foreground = color(source.foreground, `${subject}.foreground`)
-  if (source.background !== undefined) output.background = color(source.background, `${subject}.background`)
-  if (source.borderColor !== undefined) output.borderColor = color(source.borderColor, `${subject}.borderColor`)
+  if (source.foreground !== undefined) output.foreground = validateThemeColorValue(source.foreground, `${subject}.foreground`)
+  if (source.background !== undefined) output.background = validateThemeColorValue(source.background, `${subject}.background`)
+  if (source.borderColor !== undefined) output.borderColor = validateThemeColorValue(source.borderColor, `${subject}.borderColor`)
   if (source.borderWidthPx !== undefined) output.borderWidthPx = finite(source.borderWidthPx, `${subject}.borderWidthPx`, 0, 4)
   if (source.borderStyle !== undefined) {
     if (typeof source.borderStyle !== 'string' || !BORDER_STYLES.has(source.borderStyle)) throw new TypeError(`${subject}.borderStyle is unsupported`)
@@ -342,7 +342,7 @@ function backdrop(value: unknown, subject: string): ThemeBackdropMode {
   }
   return Object.freeze({
     ...(source.assetUrl === undefined ? {} : { assetUrl: source.assetUrl }),
-    fallbackColor: color(source.fallbackColor, `${subject}.fallbackColor`),
+    fallbackColor: validateThemeColorValue(source.fallbackColor, `${subject}.fallbackColor`),
     focusX: finite(source.focusX, `${subject}.focusX`, 0, 1),
     focusY: finite(source.focusY, `${subject}.focusY`, 0, 1),
     dim: finite(source.dim, `${subject}.dim`, 0, 1),

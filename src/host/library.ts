@@ -6,14 +6,15 @@ import { dirname, extname, join } from 'node:path'
 import {
   parseSkinArchive, parseSkinFiles, type ParsedSkinArchive,
 } from './archive.ts'
-import type {
-  CommitSkinResult, PrepareSkinResult, SkinExperienceDescriptor, SkinHostState,
-  SkinDraftDescriptor, SkinSource, StoredSkinSummary, ThemeLayerV2,
+import {
+  PLUGIN_VERSION, SKIN_SCHEMA_VERSION, SKIN_VISUALS_VERSION, THEME_PARTS_VERSION, THEME_SCHEMA_VERSION,
+  type CommitSkinResult, type PrepareSkinResult, type SkinHostState,
+  type SkinDraftDescriptor, type SkinSource, type StoredSkinSummary, type ThemeLayerV2,
 } from '../shared/contracts.ts'
 
 const FINGERPRINT = /^[a-f0-9]{64}$/
 const PREPARATION_TTL_MS = 60_000
-const STATE_FILE = 'state-v3.json'
+const STATE_FILE = 'state-v4.json'
 
 interface DurableState {
   active?: string
@@ -78,11 +79,21 @@ export class SkinLibrary {
   snapshot(): SkinHostState {
     const active = this.state.active === undefined ? undefined : this.skins.get(this.state.active)?.archive
     return Object.freeze({
+      runtime: Object.freeze({
+        pluginVersion: PLUGIN_VERSION,
+        compatibility: Object.freeze({
+          dshVersion: '0.1.0-rc.5',
+          skinSchemaVersion: SKIN_SCHEMA_VERSION,
+          themeSchemaVersion: THEME_SCHEMA_VERSION,
+          themePartsVersion: THEME_PARTS_VERSION,
+          visualsSchemaVersion: SKIN_VISUALS_VERSION,
+        }),
+      }),
       activationRevision: this.state.activationRevision,
       ...(active === undefined ? {} : {
         activeFingerprint: active.fingerprint,
         activeLayer: active.layer,
-        ...(active.experience === undefined ? {} : { activeExperience: active.experience }),
+        ...(active.visuals === undefined ? {} : { activeVisuals: active.visuals }),
       }),
       ...(this.state.previousConfirmed === undefined ? {} : { previousConfirmed: this.state.previousConfirmed }),
       skins: Object.freeze([...this.skins.values()]
@@ -149,7 +160,7 @@ export class SkinLibrary {
       activationRevision: this.state.activationRevision,
       ...(skin === undefined ? {} : {
         layer: skin.layer,
-        ...(skin.experience === undefined ? {} : { experience: skin.experience }),
+        ...(skin.visuals === undefined ? {} : { visuals: skin.visuals }),
       }),
     }
   }
@@ -176,7 +187,7 @@ export class SkinLibrary {
         activationRevision: this.state.activationRevision,
         ...(skin === undefined ? {} : {
           layer: skin.layer,
-          ...(skin.experience === undefined ? {} : { experience: skin.experience }),
+          ...(skin.visuals === undefined ? {} : { visuals: skin.visuals }),
         }),
       }
     })
@@ -210,16 +221,6 @@ export class SkinLibrary {
     return { bytes, mimeType: declaration.mimeType }
   }
 
-  /** Read a validated executable client bundle for the same-origin dynamic module route. */
-  experience(fingerprint: string): { bytes: Uint8Array; descriptor: SkinExperienceDescriptor } {
-    const skin = this.requireSkin(fingerprint).archive
-    const descriptor = skin.experience
-    const entry = skin.manifest.experience?.entry
-    const bytes = entry === undefined ? undefined : skin.files.get(entry)
-    if (descriptor === undefined || bytes === undefined) throw new TypeError('skin experience does not exist')
-    return { bytes, descriptor }
-  }
-
   /** Read the complete validated authoring descriptor without exposing arbitrary stored files. */
   draft(fingerprint: string): SkinDraftDescriptor {
     const skin = this.requireSkin(fingerprint)
@@ -228,7 +229,7 @@ export class SkinLibrary {
       source: skin.source,
       manifest: skin.archive.manifest,
       layer: skin.archive.layer,
-      ...(skin.archive.experience === undefined ? {} : { experience: skin.archive.experience }),
+      ...(skin.archive.visuals === undefined ? {} : { visuals: skin.archive.visuals }),
     })
   }
 
@@ -334,8 +335,8 @@ function summary(skin: ParsedSkinArchive, source: SkinSource): StoredSkinSummary
     ...(manifest.description === undefined ? {} : { description: manifest.description }),
     tags: manifest.tags,
     parts: Object.freeze([...new Set(skin.layer.partStyles?.map(rule => rule.part) ?? [])]),
+    visualSlots: Object.freeze(skin.visuals?.items.map(item => item.slot) ?? []),
     ...(skin.preview === undefined ? {} : { preview: skin.preview }),
-    ...(skin.experience === undefined ? {} : { experience: skin.experience }),
   })
 }
 
@@ -354,7 +355,7 @@ async function readStoredSkin(directory: string): Promise<ParsedSkinArchive> {
     if (!isMissing(error)) throw error
   }
   try {
-    entries['experience/client.js'] = await readFile(join(directory, 'experience', 'client.js'))
+    entries['visuals.json'] = await readFile(join(directory, 'visuals.json'))
   } catch (error) {
     if (!isMissing(error)) throw error
   }
