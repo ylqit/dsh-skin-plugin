@@ -194,9 +194,7 @@ describe('part anchor shim', () => {
     expect(button.getAttribute(PART)).toBe('primitive.button')
 
     button.remove()
-    await tick(20)
-
-    expect(button.hasAttribute(PART)).toBe(false)
+    await vi.waitFor(() => { expect(button.hasAttribute(PART)).toBe(false) })
   })
 
   it('retracts every shim write on dispose', async () => {
