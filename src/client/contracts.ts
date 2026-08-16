@@ -67,6 +67,7 @@ export interface SkinStudioInjected {
   exportDraft(): void
   activate(fingerprint: string): void
   restoreDefault(): void
+  resumePreview(): void
   cancelPreview(): void
   setColorScheme(mode: 'light' | 'dark'): void
   deleteSkin(fingerprint: string): void

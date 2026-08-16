@@ -46,6 +46,7 @@ export function apply(rawContext: unknown): void {
     exportDraft: () => { controller.exportDraft() },
     activate: fingerprint => { controller.activate(fingerprint) },
     restoreDefault: () => { controller.restoreDefault() },
+    resumePreview: () => { controller.resumePreview() },
     cancelPreview: () => { controller.cancelPreview() },
     setColorScheme: mode => { controller.setColorScheme(mode) },
     deleteSkin: fingerprint => { controller.deleteSkin(fingerprint) },

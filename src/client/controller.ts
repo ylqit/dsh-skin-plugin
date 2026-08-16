@@ -39,6 +39,17 @@ interface PresentationLane {
   setThemeEnabled?: (enabled: boolean) => void
 }
 
+interface DraftExperiencePresentation {
+  descriptor: SkinExperienceDescriptor
+  themeId: string
+}
+
+interface PreviewIdentity {
+  themeId: string
+  fingerprint?: string
+  experience?: SkinExperienceDescriptor
+}
+
 interface ExperiencePresenter {
   install(descriptor: SkinExperienceDescriptor, themeId: string): Promise<void>
   clear(): void
@@ -55,6 +66,7 @@ export class SkinStudioController {
   private assets: DraftAsset[] = []
   private draftManifest: SkinManifestV3 = starterManifest('我的 Harness 皮肤')
   private draftExperienceBytes: Uint8Array | undefined
+  private draftExperiencePresentation: DraftExperiencePresentation | undefined
   private past: DraftHistoryEntry[] = []
   private future: DraftHistoryEntry[] = []
   private baseline: DraftHistoryEntry
@@ -62,6 +74,7 @@ export class SkinStudioController {
   private mode: 'light' | 'dark'
   private busyCount = 0
   private refreshGeneration = 0
+  private previewGeneration = 0
 
   constructor(
     private readonly theme: ThemeService,
@@ -123,6 +136,7 @@ export class SkinStudioController {
         const name = '我的 Harness 皮肤'
         this.draftManifest = starterManifest(name)
         this.draftExperienceBytes = undefined
+        this.draftExperiencePresentation = undefined
         this.experience?.clear()
         this.replaceDraft(starterLayer(), name, [])
         return
@@ -140,8 +154,14 @@ export class SkinStudioController {
       }
       this.draftManifest = manifest
       this.draftExperienceBytes = experienceBytes
-      if (source.experience === undefined) this.experience?.clear()
-      else await this.experience?.install(source.experience, source.fingerprint)
+      this.draftExperiencePresentation = source.experience === undefined
+        ? undefined
+        : { descriptor: source.experience, themeId: source.fingerprint }
+      if (this.draftExperiencePresentation === undefined) this.experience?.clear()
+      else await this.experience?.install(
+        this.draftExperiencePresentation.descriptor,
+        this.draftExperiencePresentation.themeId,
+      )
       this.replaceDraft(draft, manifest.name, assets)
     })
   }
@@ -309,14 +329,37 @@ export class SkinStudioController {
   }
 
   cancelPreview(): void {
+    this.previewGeneration += 1
     const previous = this.previewLane
-    if (previous === undefined) return
-    previous.disposeTheme?.()
-    this.previewLane = undefined
-    this.activeLane?.setThemeEnabled?.(true)
-    syncBackdropFlag(this.activeLane?.layer)
-    this.set({ previewing: false, error: undefined })
+    if (previous !== undefined) {
+      previous.disposeTheme?.()
+      this.previewLane = undefined
+      this.activeLane?.setThemeEnabled?.(true)
+      syncBackdropFlag(this.activeLane?.layer)
+      this.set({ previewing: false, error: undefined })
+    }
     void this.restoreActiveExperience()
+  }
+
+  resumePreview(): void {
+    if (this.previewLane !== undefined) return
+    const generation = ++this.previewGeneration
+    void this.run(async () => {
+      const initialLayer = this.snapshotValue.draft
+      await preloadLayerImages(initialLayer)
+      if (generation !== this.previewGeneration) return
+      const draftExperience = this.draftExperiencePresentation
+      if (draftExperience === undefined) this.experience?.clear()
+      else await this.experience?.install(draftExperience.descriptor, draftExperience.themeId)
+      if (generation !== this.previewGeneration) return
+      const currentLayer = this.snapshotValue.draft
+      if (currentLayer !== initialLayer) await preloadLayerImages(currentLayer)
+      if (generation !== this.previewGeneration) return
+      this.replacePreview(currentLayer, {
+        themeId: draftExperience?.themeId ?? PREVIEW_SOURCE,
+        ...(draftExperience === undefined ? {} : { experience: draftExperience.descriptor }),
+      })
+    })
   }
 
   setColorScheme(mode: 'light' | 'dark'): void {
@@ -406,7 +449,11 @@ export class SkinStudioController {
     await preloadLayerImages(prepared.layer)
     if (prepared.experience === undefined) this.experience?.clear()
     else await this.experience?.install(prepared.experience, prepared.fingerprint)
-    this.replacePreview(prepared.layer, prepared.fingerprint)
+    this.replacePreview(prepared.layer, {
+      themeId: prepared.fingerprint,
+      fingerprint: prepared.fingerprint,
+      ...(prepared.experience === undefined ? {} : { experience: prepared.experience }),
+    })
   }
 
   setPartEnabled(part: string, enabled: boolean): void {
@@ -519,18 +566,21 @@ export class SkinStudioController {
     }
   }
 
-  private replacePreview(layer: ThemeLayerV2, themeId: string): void {
+  private replacePreview(layer: ThemeLayerV2, identity: PreviewIdentity): void {
+    this.previewGeneration += 1
     const previous = this.previewLane
     const presentation = presentSkinLayer({
       kind: 'preview',
       layer,
-      ...(themeId === PREVIEW_SOURCE ? {} : { fingerprint: themeId }),
+      ...(identity.fingerprint === undefined ? {} : { fingerprint: identity.fingerprint }),
     })
     flushSync(() => {
       this.activeLane?.setThemeEnabled?.(false)
       this.previewLane = {
-        key: `preview:${themeId}`,
-        themeId,
+        key: `preview:${identity.themeId}`,
+        themeId: identity.themeId,
+        layer,
+        ...(identity.experience === undefined ? {} : { experience: identity.experience }),
         disposeTheme: presentation.dispose,
       }
       this.set({ previewing: true, error: undefined })
@@ -549,9 +599,16 @@ export class SkinStudioController {
     this.past.push(this.historyEntry())
     if (this.past.length > 50) this.past.shift()
     this.future = []
+    const previewing = this.previewLane !== undefined
     this.applyDraft(next)
     try {
-      this.replacePreview(layer, PREVIEW_SOURCE)
+      if (previewing) {
+        const draftExperience = this.draftExperiencePresentation
+        this.replacePreview(layer, {
+          themeId: draftExperience?.themeId ?? PREVIEW_SOURCE,
+          ...(draftExperience === undefined ? {} : { experience: draftExperience.descriptor }),
+        })
+      }
       if (replacementAssets !== undefined) this.replaceAssets(replacementAssets)
     } catch (error) {
       if (replacementAssets !== undefined) {
@@ -572,7 +629,11 @@ export class SkinStudioController {
     this.disabledPartRules.clear()
     this.applyDraft(entry)
     try {
-      this.replacePreview(layer, PREVIEW_SOURCE)
+      const draftExperience = this.draftExperiencePresentation
+      this.replacePreview(layer, {
+        themeId: draftExperience?.themeId ?? PREVIEW_SOURCE,
+        ...(draftExperience === undefined ? {} : { experience: draftExperience.descriptor }),
+      })
       this.replaceAssets(assets)
     } catch (error) {
       const existing = new Set(this.assets)
@@ -589,9 +650,16 @@ export class SkinStudioController {
 
   private presentHistory(entry: DraftHistoryEntry): void {
     const copy = structuredClone(entry)
+    const previewing = this.previewLane !== undefined
     this.applyDraft(copy)
     try {
-      this.replacePreview(copy.layer, PREVIEW_SOURCE)
+      if (previewing) {
+        const draftExperience = this.draftExperiencePresentation
+        this.replacePreview(copy.layer, {
+          themeId: draftExperience?.themeId ?? PREVIEW_SOURCE,
+          ...(draftExperience === undefined ? {} : { experience: draftExperience.descriptor }),
+        })
+      }
     } catch (error) {
       this.fail(error)
     }

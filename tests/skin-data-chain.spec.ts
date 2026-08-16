@@ -418,6 +418,74 @@ describe('overlay skin data chain', () => {
     })
   })
 
+  it('resumes the same draft Theme Layer and Experience without resetting its history', async () => {
+    const fingerprint = '9'.repeat(64)
+    const descriptor = {
+      apiVersion: 1 as const,
+      moduleId: 'dsh-skin:00000000-0000-4000-8000-000000000009',
+      url: `/api/dsh-skin/experience/${fingerprint}/client.js`,
+      rev: fingerprint,
+      placements: ['skin.shell.floating'] as const,
+      assets: {},
+    }
+    const layer = theme('Resume')
+    const source = {
+      fingerprint,
+      source: 'local' as const,
+      manifest: {
+        schemaVersion: 3 as const,
+        id: 'resume-draft', name: 'Resume Draft', version: '2.0.0', tags: [],
+        themePartsVersion: 2 as const, capabilities: ['tokens', 'component-experience'] as const, assets: [],
+        experience: {
+          apiVersion: 1 as const, moduleId: descriptor.moduleId, entry: 'experience/client.js' as const,
+          sha256: '0'.repeat(64), bytes: 17, placements: descriptor.placements,
+        },
+      },
+      layer,
+      experience: descriptor,
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const path = String(input)
+      if (path.endsWith(`/skins/${fingerprint}`)) return envelope(source)
+      if (path === descriptor.url) return new Response('export default {}')
+      throw new Error(`unexpected test request ${path}`)
+    }))
+    const experience = { install: vi.fn(async () => {}), clear: vi.fn(), setMode: vi.fn() }
+    const controller = new SkinStudioController(themeService(), true, experience)
+
+    controller.beginDraft(fingerprint)
+    await vi.waitFor(() => { expect(controller.getSnapshot().previewing).toBe(true) })
+    controller.updateToken('--dsw-alias-brand-primary', 'light', '#4f8f3a')
+    controller.updateToken('--dsw-alias-brand-primary', 'light', '#5fa34a')
+    controller.undo()
+    const before = structuredClone(controller.getSnapshot())
+    expect(before.canUndo).toBe(true)
+    expect(before.canRedo).toBe(true)
+
+    controller.cancelPreview()
+    expect(controller.getSnapshot().previewing).toBe(false)
+    expect(previewStyle()).toBeNull()
+    controller.undo()
+    expect(controller.getSnapshot().previewing).toBe(false)
+    expect(previewStyle()).toBeNull()
+    controller.redo()
+    expect(controller.getSnapshot()).toMatchObject({ draft: before.draft, canUndo: true, canRedo: true, previewing: false })
+    experience.install.mockClear()
+
+    controller.resumePreview()
+    await vi.waitFor(() => { expect(controller.getSnapshot().previewing).toBe(true) })
+    expect(controller.getSnapshot()).toMatchObject({
+      draft: before.draft,
+      draftName: before.draftName,
+      dirty: before.dirty,
+      canUndo: before.canUndo,
+      canRedo: before.canRedo,
+      changes: before.changes,
+    })
+    expect(previewStyle()?.textContent).toContain('#4f8f3a')
+    expect(experience.install).toHaveBeenLastCalledWith(descriptor, fingerprint)
+  })
+
   it('keeps component assets when backdrop images are replaced in Studio', async () => {
     let uploaded: Uint8Array | undefined
     installInstantImages()

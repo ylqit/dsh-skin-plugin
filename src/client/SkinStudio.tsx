@@ -174,7 +174,7 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
             <Button variant="ghost" size="sm" disabled={!state.canRedo} onClick={props.redo}>重做</Button>
             <Button variant="primary" size="sm" disabled={manageDisabled} onClick={props.saveDraft}>保存到 Host</Button>
             <Button variant="outline" size="sm" disabled={manageDisabled} onClick={props.exportDraft}>导出 .dshskin</Button>
-            {state.previewing ? <Button variant="ghost" size="sm" onClick={props.cancelPreview}>取消试穿</Button> : <Button variant="ghost" size="sm" disabled title="从主题库选择“编辑与试穿”后开启">全页试穿</Button>}
+            {state.previewing ? <Button variant="ghost" size="sm" onClick={props.cancelPreview}>取消试穿</Button> : <Button variant="ghost" size="sm" disabled={manageDisabled} onClick={props.resumePreview}>全页试穿</Button>}
           </div>
           <span className={css.dirtyState} title={state.changes.join('、')}>{state.dirty ? `未保存 · ${state.changes.length} 项修改` : '已保存'}</span>
         </div>

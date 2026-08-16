@@ -18,6 +18,7 @@ const calls = {
   beginDraft: vi.fn(),
   saveDraft: vi.fn(),
   restoreDefault: vi.fn(),
+  resumePreview: vi.fn(),
   setPartEnabled: vi.fn(),
 }
 
@@ -89,6 +90,7 @@ async function renderStudio(overrides: Partial<StudioSnapshot> = {}): Promise<vo
     exportDraft: vi.fn(),
     activate: vi.fn(),
     restoreDefault: calls.restoreDefault,
+    resumePreview: calls.resumePreview,
     cancelPreview: vi.fn(),
     setColorScheme: vi.fn(),
     deleteSkin: vi.fn(),
@@ -179,6 +181,8 @@ describe('SkinStudio workbench', () => {
     expect(calls.beginDraft).toHaveBeenCalledWith('a'.repeat(64))
     await act(async () => { button('保存到 Host').click() })
     expect(calls.saveDraft).toHaveBeenCalledOnce()
+    await act(async () => { button('全页试穿').click() })
+    expect(calls.resumePreview).toHaveBeenCalledOnce()
     await act(async () => { button('启用组件换肤').click() })
     expect(calls.setPartEnabled).toHaveBeenCalledWith('app.root', true)
   })
