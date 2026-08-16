@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "items": [
+    {
+      "id": "squirtle-water-mark",
+      "slot": "conversation.empty-mark",
+      "template": "image-mark",
+      "modes": {
+        "light": { "assetUrl": "asset:assets/element-mark.png", "fit": "contain", "positionX": 0.5, "positionY": 0.5, "background": "rgba(232,248,255,0.78)" },
+        "dark": { "assetUrl": "asset:assets/element-mark.png", "fit": "contain", "positionX": 0.5, "positionY": 0.5, "background": "rgba(7,27,43,0.78)" }
+      }
+    }
+  ]
+}

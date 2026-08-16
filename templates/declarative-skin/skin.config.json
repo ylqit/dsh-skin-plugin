@@ -1,0 +1,12 @@
+{
+  "id": "__THEME_ID__",
+  "name": "__THEME_NAME__",
+  "version": "3.0.0",
+  "author": "Theme Author",
+  "description": "A safe declarative Harness visual theme.",
+  "tags": ["declarative-visuals"],
+  "preview": {
+    "light": "assets/backdrop-light.webp",
+    "dark": "assets/backdrop-dark.webp"
+  }
+}

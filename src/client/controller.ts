@@ -2,17 +2,19 @@ import { strToU8, zipSync, type Zippable } from 'fflate'
 import { flushSync } from 'react-dom'
 import type {
   CommitSkinResult, PrepareSkinResult, SkinAssetManifest,
-  SkinDraftDescriptor, SkinExperienceDescriptor, SkinHostState, SkinManifestV3, ThemeBackdropMode, ThemeColorValue,
+  SkinDraftDescriptor, SkinHostState, SkinManifestV4, SkinVisualsV1, ThemeBackdropMode, ThemeColorValue,
   ThemeLayerV2, ThemePartId, ThemePartInspection, ThemePartRule, ThemePartStyle,
-  ThemeTokenInspection,
+  ThemeTokenInspection, VisualSlotId, VisualTemplateKind,
 } from '../shared/contracts.ts'
-import { SKIN_SCHEMA_VERSION, THEME_PARTS_VERSION, THEME_SCHEMA_VERSION } from '../shared/contracts.ts'
+import { PLUGIN_VERSION, SKIN_SCHEMA_VERSION, SKIN_VISUALS_VERSION, THEME_PARTS_VERSION, THEME_SCHEMA_VERSION } from '../shared/contracts.ts'
 import { THEME_PART_CATALOG, THEME_TOKEN_NAMES } from '../shared/theme-layer.ts'
 import type { StudioSnapshot, ThemeService } from './contracts.ts'
 import { presentSkinLayer, syncBackdropFlag } from './present.ts'
+import { VISUAL_SLOT_CATALOG } from './visual-catalog.ts'
 
 const API = '/api/dsh-skin'
 const PREVIEW_SOURCE = '@ylq77147/dsh-skin-plugin/preview'
+const DRAFT_VISUALS_UNCHANGED = Symbol('draft visuals unchanged')
 const EMPTY_BACKDROP: ThemeBackdropMode = {
   fallbackColor: '#f5f7fb', focusX: 0.5, focusY: 0.5, dim: 0.12, blurPx: 0,
 }
@@ -27,6 +29,7 @@ interface DraftAsset {
 
 interface DraftHistoryEntry {
   layer: ThemeLayerV2
+  visuals?: SkinVisualsV1
   name: string
 }
 
@@ -34,24 +37,19 @@ interface PresentationLane {
   key: string
   themeId: string
   layer?: ThemeLayerV2
-  experience?: SkinExperienceDescriptor
+  visuals?: SkinVisualsV1
   disposeTheme?: () => void
   setThemeEnabled?: (enabled: boolean) => void
-}
-
-interface DraftExperiencePresentation {
-  descriptor: SkinExperienceDescriptor
-  themeId: string
 }
 
 interface PreviewIdentity {
   themeId: string
   fingerprint?: string
-  experience?: SkinExperienceDescriptor
+  visuals?: SkinVisualsV1
 }
 
-interface ExperiencePresenter {
-  install(descriptor: SkinExperienceDescriptor, themeId: string): Promise<void>
+interface VisualPresenter {
+  install(visuals: SkinVisualsV1, themeId: string): void
   clear(): void
   setMode(mode: 'light' | 'dark'): void
 }
@@ -64,9 +62,8 @@ export class SkinStudioController {
   private previewLane: PresentationLane | undefined
   private eventSource: EventSource | undefined
   private assets: DraftAsset[] = []
-  private draftManifest: SkinManifestV3 = starterManifest('我的 Harness 皮肤')
-  private draftExperienceBytes: Uint8Array | undefined
-  private draftExperiencePresentation: DraftExperiencePresentation | undefined
+  private draftManifest: SkinManifestV4 = starterManifest('我的 Harness 皮肤')
+  private draftVisuals: SkinVisualsV1 | undefined
   private past: DraftHistoryEntry[] = []
   private future: DraftHistoryEntry[] = []
   private baseline: DraftHistoryEntry
@@ -79,13 +76,14 @@ export class SkinStudioController {
   constructor(
     private readonly theme: ThemeService,
     localManagement: boolean,
-    private readonly experience?: ExperiencePresenter,
+    private readonly visualRuntime?: VisualPresenter,
   ) {
     this.mode = theme.getTheme().active.colorScheme
     this.baseline = { layer: starterLayer(), name: '我的 Harness 皮肤' }
     this.snapshotValue = {
       host: undefined,
       draft: this.baseline.layer,
+      draftVisuals: undefined,
       draftName: this.baseline.name,
       busy: false,
       previewing: false,
@@ -94,11 +92,12 @@ export class SkinStudioController {
       canRedo: false,
       changes: [],
       localManagement,
+      versionMismatch: undefined,
       error: undefined,
       tokens: inspectTokens(),
       parts: inspectParts(),
     }
-    this.experience?.setMode(this.mode)
+    this.visualRuntime?.setMode(this.mode)
   }
 
   getSnapshot = (): StudioSnapshot => this.snapshotValue
@@ -125,7 +124,7 @@ export class SkinStudioController {
       this.releaseLane(this.activeLane)
       this.activeLane = undefined
       syncBackdropFlag(undefined)
-      this.experience?.clear()
+      this.visualRuntime?.clear()
       this.revokeAssets()
     }
   }
@@ -135,34 +134,25 @@ export class SkinStudioController {
       if (fingerprint === undefined) {
         const name = '我的 Harness 皮肤'
         this.draftManifest = starterManifest(name)
-        this.draftExperienceBytes = undefined
-        this.draftExperiencePresentation = undefined
-        this.experience?.clear()
-        this.replaceDraft(starterLayer(), name, [])
+        this.draftVisuals = undefined
+        this.visualRuntime?.clear()
+        this.replaceDraft(starterLayer(), undefined, name, [])
         return
       }
       const source = await request<SkinDraftDescriptor>(`${API}/skins/${fingerprint}`)
       const draft = structuredClone(source.layer)
-      const assets = await this.loadDraftAssets(source.fingerprint, source.manifest, draft)
-      const experienceBytes = source.experience === undefined
-        ? undefined
-        : await fetchBytes(source.experience.url, 2 * 1024 * 1024, 'Experience Bundle')
+      const draftVisuals = source.visuals === undefined ? undefined : structuredClone(source.visuals)
+      const assets = await this.loadDraftAssets(source.fingerprint, source.manifest, draft, draftVisuals)
       const manifest = structuredClone(source.manifest)
       if (source.source === 'builtin') {
         manifest.id = `${manifest.id}-custom`
         manifest.name = `${manifest.name} 副本`
       }
       this.draftManifest = manifest
-      this.draftExperienceBytes = experienceBytes
-      this.draftExperiencePresentation = source.experience === undefined
-        ? undefined
-        : { descriptor: source.experience, themeId: source.fingerprint }
-      if (this.draftExperiencePresentation === undefined) this.experience?.clear()
-      else await this.experience?.install(
-        this.draftExperiencePresentation.descriptor,
-        this.draftExperiencePresentation.themeId,
-      )
-      this.replaceDraft(draft, manifest.name, assets)
+      this.draftVisuals = draftVisuals
+      if (draftVisuals === undefined) this.visualRuntime?.clear()
+      else this.visualRuntime?.install(draftVisuals, source.fingerprint)
+      this.replaceDraft(draft, draftVisuals, manifest.name, assets)
     })
   }
 
@@ -302,7 +292,7 @@ export class SkinStudioController {
           await this.installActive({
             fingerprint: host.activeFingerprint,
             layer: host.activeLayer,
-            ...(host.activeExperience === undefined ? {} : { experience: host.activeExperience }),
+            ...(host.activeVisuals === undefined ? {} : { visuals: host.activeVisuals }),
             activationRevision: host.activationRevision,
           })
           return
@@ -338,7 +328,7 @@ export class SkinStudioController {
       syncBackdropFlag(this.activeLane?.layer)
       this.set({ previewing: false, error: undefined })
     }
-    void this.restoreActiveExperience(generation)
+    this.restoreActiveVisuals(generation)
   }
 
   resumePreview(): void {
@@ -348,16 +338,17 @@ export class SkinStudioController {
       const initialLayer = this.snapshotValue.draft
       await preloadLayerImages(initialLayer)
       if (generation !== this.previewGeneration) return
-      const draftExperience = this.draftExperiencePresentation
-      if (draftExperience === undefined) this.experience?.clear()
-      else await this.experience?.install(draftExperience.descriptor, draftExperience.themeId)
+      const draftVisuals = this.draftVisuals
+      if (draftVisuals !== undefined) await preloadVisualImages(draftVisuals)
       if (generation !== this.previewGeneration) return
+      if (draftVisuals === undefined) this.visualRuntime?.clear()
+      else this.visualRuntime?.install(draftVisuals, PREVIEW_SOURCE)
       const currentLayer = this.snapshotValue.draft
       if (currentLayer !== initialLayer) await preloadLayerImages(currentLayer)
       if (generation !== this.previewGeneration) return
       this.replacePreview(currentLayer, {
-        themeId: draftExperience?.themeId ?? PREVIEW_SOURCE,
-        ...(draftExperience === undefined ? {} : { experience: draftExperience.descriptor }),
+        themeId: PREVIEW_SOURCE,
+        ...(draftVisuals === undefined ? {} : { visuals: draftVisuals }),
       })
     })
   }
@@ -370,7 +361,7 @@ export class SkinStudioController {
   setResolvedMode(mode: 'light' | 'dark'): void {
     if (this.mode === mode) return
     this.mode = mode
-    this.experience?.setMode(mode)
+    this.visualRuntime?.setMode(mode)
   }
 
   deleteSkin(fingerprint: string): void {
@@ -386,11 +377,18 @@ export class SkinStudioController {
     try {
       const host = await request<SkinHostState>(`${API}/state`)
       if (generation !== this.refreshGeneration) return
-      this.set({ host, error: undefined })
+      const compatibility = host.runtime?.compatibility
+      const compatible = host.runtime?.pluginVersion === PLUGIN_VERSION
+        && compatibility?.skinSchemaVersion === SKIN_SCHEMA_VERSION
+        && compatibility.visualsSchemaVersion === SKIN_VISUALS_VERSION
+      const versionMismatch = compatible
+        ? undefined
+        : `Host ${host.runtime?.pluginVersion ?? '未知版本'} 与 Client ${PLUGIN_VERSION} 不一致。`
+      this.set({ host, versionMismatch, error: undefined })
       await this.installActive({
         ...(host.activeFingerprint === undefined ? {} : { fingerprint: host.activeFingerprint }),
         ...(host.activeLayer === undefined ? {} : { layer: host.activeLayer }),
-        ...(host.activeExperience === undefined ? {} : { experience: host.activeExperience }),
+        ...(host.activeVisuals === undefined ? {} : { visuals: host.activeVisuals }),
         activationRevision: host.activationRevision,
       }, generation)
     } catch (error) {
@@ -406,8 +404,10 @@ export class SkinStudioController {
 
     if (committed.layer !== undefined) await preloadLayerImages(committed.layer)
     if (expectedGeneration !== undefined && expectedGeneration !== this.refreshGeneration) return
-    if (committed.experience === undefined || committed.fingerprint === undefined) this.experience?.clear()
-    else await this.experience?.install(committed.experience, committed.fingerprint)
+    if (committed.visuals !== undefined) await preloadVisualImages(committed.visuals)
+    if (expectedGeneration !== undefined && expectedGeneration !== this.refreshGeneration) return
+    if (committed.visuals === undefined || committed.fingerprint === undefined) this.visualRuntime?.clear()
+    else this.visualRuntime?.install(committed.visuals, committed.fingerprint)
     if (expectedGeneration !== undefined && expectedGeneration !== this.refreshGeneration) return
     const presentation = committed.layer === undefined || committed.fingerprint === undefined
       ? undefined
@@ -426,7 +426,7 @@ export class SkinStudioController {
         key,
         themeId: committed.fingerprint ?? 'harness-default',
         ...(committed.layer === undefined ? {} : { layer: committed.layer }),
-        ...(committed.experience === undefined ? {} : { experience: committed.experience }),
+        ...(committed.visuals === undefined ? {} : { visuals: committed.visuals }),
         ...(presentation === undefined ? {} : {
           disposeTheme: presentation.dispose,
           setThemeEnabled: presentation.setEnabled,
@@ -447,12 +447,13 @@ export class SkinStudioController {
       throw new Error('Host returned an incomplete skin preparation')
     }
     await preloadLayerImages(prepared.layer)
-    if (prepared.experience === undefined) this.experience?.clear()
-    else await this.experience?.install(prepared.experience, prepared.fingerprint)
+    if (prepared.visuals !== undefined) await preloadVisualImages(prepared.visuals)
+    if (prepared.visuals === undefined) this.visualRuntime?.clear()
+    else this.visualRuntime?.install(prepared.visuals, prepared.fingerprint)
     this.replacePreview(prepared.layer, {
       themeId: prepared.fingerprint,
       fingerprint: prepared.fingerprint,
-      ...(prepared.experience === undefined ? {} : { experience: prepared.experience }),
+      ...(prepared.visuals === undefined ? {} : { visuals: prepared.visuals }),
     })
   }
 
@@ -542,6 +543,150 @@ export class SkinStudioController {
     })
   }
 
+  updatePartSurfaceSettings(
+    part: string,
+    variant: string,
+    state: string,
+    mode: 'light' | 'dark',
+    field: 'fit' | 'positionX' | 'positionY',
+    value: string,
+  ): void {
+    const layer = structuredClone(this.snapshotValue.draft)
+    const normalizedVariant = variant === '' ? undefined : variant
+    const normalizedState = state === '' ? undefined : state
+    const rules = [...(layer.partStyles ?? [])]
+    const at = rules.findIndex(rule => rule.part === part && rule.variant === normalizedVariant && rule.state === normalizedState)
+    const previous = at < 0 ? undefined : rules[at]
+    const surface = previous?.style[mode].surfaceImage
+    if (surface === undefined) throw new TypeError(`组件 ${part} 的 ${mode} 模式尚未设置背景素材`)
+    const nextValue = field === 'fit'
+      ? (value === 'cover' || value === 'contain' ? value : undefined)
+      : Number(value)
+    if (nextValue === undefined || (typeof nextValue === 'number' && (!Number.isFinite(nextValue) || nextValue < 0 || nextValue > 1))) {
+      throw new TypeError(`${field} 值无效`)
+    }
+    const style = { ...previous!.style[mode], surfaceImage: { ...surface, [field]: nextValue } }
+    rules[at] = { ...previous!, style: { ...previous!.style, [mode]: style } }
+    layer.partStyles = rules
+    this.publishDraft(layer)
+  }
+
+  removePartSurfaceImage(part: string, variant: string, state: string, mode: 'light' | 'dark'): void {
+    const layer = structuredClone(this.snapshotValue.draft)
+    const normalizedVariant = variant === '' ? undefined : variant
+    const normalizedState = state === '' ? undefined : state
+    const rules = [...(layer.partStyles ?? [])]
+    const at = rules.findIndex(rule => rule.part === part && rule.variant === normalizedVariant && rule.state === normalizedState)
+    const previous = at < 0 ? undefined : rules[at]
+    const removedUrl = previous?.style[mode].surfaceImage?.assetUrl
+    if (previous === undefined || removedUrl === undefined) return
+    const modeStyle = { ...previous.style[mode] }
+    delete modeStyle.surfaceImage
+    const nextRule = { ...previous, style: { ...previous.style, [mode]: modeStyle } }
+    if (Object.keys(nextRule.style.light).length === 0 && Object.keys(nextRule.style.dark).length === 0) rules.splice(at, 1)
+    else rules[at] = nextRule
+    layer.partStyles = rules
+    const referenced = new Set((layer.partStyles ?? []).flatMap(rule => [rule.style.light.surfaceImage?.assetUrl, rule.style.dark.surfaceImage?.assetUrl]))
+    this.publishDraft(layer, this.snapshotValue.draftName, this.assets.filter(asset => asset.objectUrl !== removedUrl || referenced.has(removedUrl)))
+  }
+
+  configureVisual(slot: VisualSlotId, template: VisualTemplateKind, label: string, value: string): void {
+    const definition = VISUAL_SLOT_CATALOG[slot]
+    if (!definition.templates.includes(template)) throw new TypeError(`${slot} 不支持 ${template} 模板`)
+    const normalizedLabel = label.trim().slice(0, 40)
+    const normalizedValue = value.trim().slice(0, 40)
+    if ((template === 'compact-brand' || template === 'status-chip') && normalizedLabel === '') {
+      throw new TypeError(`${template} 模板必须填写文字`)
+    }
+    const current = this.draftVisuals?.items.find(item => item.slot === slot)
+    const item = {
+      id: current?.id ?? `${slot.replaceAll('.', '-')}-visual`,
+      slot,
+      template,
+      ...(template === 'image-mark' || normalizedLabel === '' ? {} : { label: normalizedLabel }),
+      ...(template !== 'status-chip' || normalizedValue === '' ? {} : { value: normalizedValue }),
+      modes: current?.modes ?? { light: {}, dark: {} },
+    } as const
+    const items = [...(this.draftVisuals?.items ?? []).filter(candidate => candidate.slot !== slot), item]
+    this.publishDraft(this.snapshotValue.draft, this.snapshotValue.draftName, undefined, { schemaVersion: SKIN_VISUALS_VERSION, items })
+  }
+
+  updateVisualMode(
+    slot: VisualSlotId,
+    mode: 'light' | 'dark',
+    field: 'foreground' | 'background' | 'fit' | 'positionX' | 'positionY',
+    value: string,
+  ): void {
+    const visuals = structuredClone(this.draftVisuals)
+    const item = visuals?.items.find(candidate => candidate.slot === slot)
+    if (visuals === undefined || item === undefined) throw new TypeError(`请先为 ${slot} 选择模板`)
+    const nextValue = field === 'foreground' || field === 'background'
+      ? colorValue(value)
+      : field === 'fit'
+        ? (value === 'cover' || value === 'contain' ? value : undefined)
+        : Number(value)
+    if (nextValue === undefined || (typeof nextValue === 'number' && (!Number.isFinite(nextValue) || nextValue < 0 || nextValue > 1))) {
+      throw new TypeError(`${field} 值无效`)
+    }
+    item.modes[mode] = { ...item.modes[mode], [field]: nextValue }
+    this.publishDraft(this.snapshotValue.draft, this.snapshotValue.draftName, undefined, visuals)
+  }
+
+  updateVisualImage(slot: VisualSlotId, mode: 'light' | 'dark', file: File): void {
+    void this.run(async () => {
+      if (file.size === 0 || file.size > 16 * 1024 * 1024) throw new TypeError('装饰素材必须小于 16 MiB')
+      const visuals = structuredClone(this.draftVisuals)
+      const item = visuals?.items.find(candidate => candidate.slot === slot)
+      if (visuals === undefined || item === undefined) throw new TypeError(`请先为 ${slot} 选择模板`)
+      const mimeType = imageMime(file.type)
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const objectUrl = URL.createObjectURL(new Blob([bytes], { type: mimeType }))
+      try { await decodeImage(objectUrl) } catch (error) { URL.revokeObjectURL(objectUrl); throw error }
+      const oldUrl = item.modes[mode].assetUrl
+      item.modes[mode] = {
+        ...item.modes[mode], assetUrl: objectUrl,
+        fit: item.modes[mode].fit ?? 'contain',
+        positionX: item.modes[mode].positionX ?? 0.5,
+        positionY: item.modes[mode].positionY ?? 0.5,
+      }
+      const path = `assets/visual-${safeFilename(slot)}-${mode}.${extension(mimeType)}`
+      const pathStem = path.replace(/\.[^.]+$/u, '')
+      const assets = [
+        ...this.assets.filter(asset => asset.path.replace(/\.[^.]+$/u, '') !== pathStem && asset.objectUrl !== oldUrl),
+        { bytes, mimeType, path, objectUrl, purpose: 'visual' as const },
+      ]
+      this.publishDraft(this.snapshotValue.draft, this.snapshotValue.draftName, assets, visuals)
+    })
+  }
+
+  removeVisualImage(slot: VisualSlotId, mode: 'light' | 'dark'): void {
+    const visuals = structuredClone(this.draftVisuals)
+    const item = visuals?.items.find(candidate => candidate.slot === slot)
+    const removedUrl = item?.modes[mode].assetUrl
+    if (visuals === undefined || item === undefined || removedUrl === undefined) return
+    const nextMode = { ...item.modes[mode] }
+    delete nextMode.assetUrl
+    item.modes[mode] = nextMode
+    const referenced = new Set(visuals.items.flatMap(candidate => [candidate.modes.light.assetUrl, candidate.modes.dark.assetUrl]))
+    this.publishDraft(this.snapshotValue.draft, this.snapshotValue.draftName, this.assets.filter(asset => asset.objectUrl !== removedUrl || referenced.has(removedUrl)), visuals)
+  }
+
+  removeVisual(slot: VisualSlotId): void {
+    if (this.draftVisuals === undefined) return
+    const removed = this.draftVisuals.items.find(item => item.slot === slot)
+    if (removed === undefined) return
+    const items = this.draftVisuals.items.filter(item => item.slot !== slot)
+    const visuals = items.length === 0 ? null : { schemaVersion: SKIN_VISUALS_VERSION, items }
+    const removedUrls = new Set([removed.modes.light.assetUrl, removed.modes.dark.assetUrl])
+    const referenced = new Set(items.flatMap(item => [item.modes.light.assetUrl, item.modes.dark.assetUrl]))
+    this.publishDraft(
+      this.snapshotValue.draft,
+      this.snapshotValue.draftName,
+      this.assets.filter(asset => !removedUrls.has(asset.objectUrl) || referenced.has(asset.objectUrl)),
+      visuals,
+    )
+  }
+
   undo(): void {
     const previous = this.past.pop()
     if (previous === undefined) return
@@ -556,14 +701,11 @@ export class SkinStudioController {
     this.presentHistory(next)
   }
 
-  private async restoreActiveExperience(expectedPreviewGeneration: number): Promise<void> {
-    try {
-      const active = this.activeLane
-      if (active?.experience === undefined) this.experience?.clear()
-      else await this.experience?.install(active.experience, active.themeId)
-    } catch (error) {
-      if (expectedPreviewGeneration === this.previewGeneration) this.fail(error)
-    }
+  private restoreActiveVisuals(expectedPreviewGeneration: number): void {
+    if (expectedPreviewGeneration !== this.previewGeneration) return
+    const active = this.activeLane
+    if (active?.visuals === undefined) this.visualRuntime?.clear()
+    else this.visualRuntime?.install(active.visuals, active.themeId)
   }
 
   private replacePreview(layer: ThemeLayerV2, identity: PreviewIdentity): void {
@@ -580,7 +722,7 @@ export class SkinStudioController {
         key: `preview:${identity.themeId}`,
         themeId: identity.themeId,
         layer,
-        ...(identity.experience === undefined ? {} : { experience: identity.experience }),
+        ...(identity.visuals === undefined ? {} : { visuals: identity.visuals }),
         disposeTheme: presentation.dispose,
       }
       this.set({ previewing: true, error: undefined })
@@ -593,20 +735,29 @@ export class SkinStudioController {
     layer: ThemeLayerV2,
     draftName = this.snapshotValue.draftName,
     replacementAssets?: DraftAsset[],
+    visuals: SkinVisualsV1 | null | typeof DRAFT_VISUALS_UNCHANGED = DRAFT_VISUALS_UNCHANGED,
   ): void {
-    const next = { layer, name: draftName }
+    const resolvedVisuals = visuals === DRAFT_VISUALS_UNCHANGED ? this.draftVisuals : visuals ?? undefined
+    const next = {
+      layer,
+      ...(resolvedVisuals === undefined ? {} : { visuals: resolvedVisuals }),
+      name: draftName,
+    }
     if (sameHistory(this.historyEntry(), next) && replacementAssets === undefined) return
     this.past.push(this.historyEntry())
     if (this.past.length > 50) this.past.shift()
     this.future = []
+    this.draftVisuals = resolvedVisuals
     const previewing = this.previewLane !== undefined
     this.applyDraft(next)
     try {
       if (previewing) {
-        const draftExperience = this.draftExperiencePresentation
+        const draftVisuals = this.draftVisuals
+        if (draftVisuals === undefined) this.visualRuntime?.clear()
+        else this.visualRuntime?.install(draftVisuals, PREVIEW_SOURCE)
         this.replacePreview(layer, {
-          themeId: draftExperience?.themeId ?? PREVIEW_SOURCE,
-          ...(draftExperience === undefined ? {} : { experience: draftExperience.descriptor }),
+          themeId: PREVIEW_SOURCE,
+          ...(draftVisuals === undefined ? {} : { visuals: draftVisuals }),
         })
       }
       if (replacementAssets !== undefined) this.replaceAssets(replacementAssets)
@@ -621,18 +772,20 @@ export class SkinStudioController {
     }
   }
 
-  private replaceDraft(layer: ThemeLayerV2, name: string, assets: DraftAsset[]): void {
-    const entry = { layer, name }
+  private replaceDraft(layer: ThemeLayerV2, visuals: SkinVisualsV1 | undefined, name: string, assets: DraftAsset[]): void {
+    this.draftVisuals = visuals
+    const entry = { layer, ...(visuals === undefined ? {} : { visuals }), name }
     this.baseline = structuredClone(entry)
     this.past = []
     this.future = []
     this.disabledPartRules.clear()
     this.applyDraft(entry)
     try {
-      const draftExperience = this.draftExperiencePresentation
+      if (visuals === undefined) this.visualRuntime?.clear()
+      else this.visualRuntime?.install(visuals, PREVIEW_SOURCE)
       this.replacePreview(layer, {
-        themeId: draftExperience?.themeId ?? PREVIEW_SOURCE,
-        ...(draftExperience === undefined ? {} : { experience: draftExperience.descriptor }),
+        themeId: PREVIEW_SOURCE,
+        ...(visuals === undefined ? {} : { visuals }),
       })
       this.replaceAssets(assets)
     } catch (error) {
@@ -645,19 +798,25 @@ export class SkinStudioController {
   }
 
   private historyEntry(): DraftHistoryEntry {
-    return { layer: structuredClone(this.snapshotValue.draft), name: this.snapshotValue.draftName }
+    return {
+      layer: structuredClone(this.snapshotValue.draft),
+      ...(this.draftVisuals === undefined ? {} : { visuals: structuredClone(this.draftVisuals) }),
+      name: this.snapshotValue.draftName,
+    }
   }
 
   private presentHistory(entry: DraftHistoryEntry): void {
     const copy = structuredClone(entry)
+    this.draftVisuals = copy.visuals
     const previewing = this.previewLane !== undefined
     this.applyDraft(copy)
     try {
       if (previewing) {
-        const draftExperience = this.draftExperiencePresentation
+        if (copy.visuals === undefined) this.visualRuntime?.clear()
+        else this.visualRuntime?.install(copy.visuals, PREVIEW_SOURCE)
         this.replacePreview(copy.layer, {
-          themeId: draftExperience?.themeId ?? PREVIEW_SOURCE,
-          ...(draftExperience === undefined ? {} : { experience: draftExperience.descriptor }),
+          themeId: PREVIEW_SOURCE,
+          ...(copy.visuals === undefined ? {} : { visuals: copy.visuals }),
         })
       }
     } catch (error) {
@@ -669,6 +828,7 @@ export class SkinStudioController {
     const changes = draftChanges(this.baseline, entry)
     this.set({
       draft: entry.layer,
+      draftVisuals: entry.visuals,
       draftName: entry.name,
       dirty: changes.length > 0,
       canUndo: this.past.length > 0,
@@ -692,6 +852,7 @@ export class SkinStudioController {
     const name = this.snapshotValue.draftName.trim()
     if (name === '') throw new TypeError('主题名称不能为空')
     const layer = structuredClone(this.snapshotValue.draft)
+    const visuals = this.draftVisuals === undefined ? undefined : structuredClone(this.draftVisuals)
     const assets: SkinAssetManifest[] = []
     const zip: Zippable = {}
     for (const asset of this.assets) {
@@ -725,26 +886,29 @@ export class SkinStudioController {
         style.surfaceImage = { ...surfaceImage, assetUrl: `asset:${asset.path}` }
       }
     }
+    for (const item of visuals?.items ?? []) {
+      for (const mode of [item.modes.light, item.modes.dark]) {
+        if (mode.assetUrl === undefined) continue
+        const asset = this.assets.find(candidate => candidate.objectUrl === mode.assetUrl)
+        if (asset === undefined || asset.purpose !== 'visual') {
+          throw new TypeError('装饰图标资源未通过主题工作室加载，不能保存或导出')
+        }
+        mode.assetUrl = `asset:${asset.path}`
+      }
+    }
     const capabilities = [
       ...(Object.keys(layer.tokens).length === 0 ? [] : ['tokens' as const]),
       ...(layer.backdrop === undefined ? [] : ['backdrop' as const]),
       ...(layer.partStyles === undefined || layer.partStyles.length === 0 ? [] : ['component-parts' as const]),
-      ...(this.draftExperienceBytes === undefined ? [] : ['component-experience' as const]),
+      ...(visuals === undefined ? [] : ['component-visuals' as const]),
     ]
     const lightAsset = this.assets.find(asset => asset.objectUrl === this.snapshotValue.draft.backdrop?.light.assetUrl)
     const darkAsset = this.assets.find(asset => asset.objectUrl === this.snapshotValue.draft.backdrop?.dark.assetUrl)
     const preview = lightAsset !== undefined && darkAsset !== undefined
       ? { light: `asset:${lightAsset.path}`, dark: `asset:${darkAsset.path}` }
       : this.draftManifest.preview
-    const experience = this.draftExperienceBytes === undefined || this.draftManifest.experience === undefined
-      ? undefined
-      : {
-          ...this.draftManifest.experience,
-          sha256: await digest(this.draftExperienceBytes),
-          bytes: this.draftExperienceBytes.byteLength,
-        }
-    const { preview: _oldPreview, experience: _oldExperience, ...baseManifest } = this.draftManifest
-    const manifest: SkinManifestV3 = {
+    const { preview: _oldPreview, visuals: _oldVisuals, ...baseManifest } = this.draftManifest
+    const manifest: SkinManifestV4 = {
       ...baseManifest,
       schemaVersion: SKIN_SCHEMA_VERSION,
       id: this.draftManifest.id || safeFilename(name).toLowerCase(),
@@ -753,11 +917,11 @@ export class SkinStudioController {
       capabilities,
       assets,
       ...(preview === undefined ? {} : { preview }),
-      ...(experience === undefined ? {} : { experience }),
+      ...(visuals === undefined ? {} : { visuals: { schemaVersion: SKIN_VISUALS_VERSION, entry: 'visuals.json' } }),
     }
     zip['manifest.json'] = strToU8(`${JSON.stringify(manifest, null, 2)}\n`)
     zip['theme.json'] = strToU8(`${JSON.stringify({ schemaVersion: THEME_SCHEMA_VERSION, ...layer }, null, 2)}\n`)
-    if (this.draftExperienceBytes !== undefined) zip['experience/client.js'] = this.draftExperienceBytes
+    if (visuals !== undefined) zip['visuals.json'] = strToU8(`${JSON.stringify(visuals, null, 2)}\n`)
     return zipSync(zip, { level: 6 })
   }
 
@@ -778,7 +942,12 @@ export class SkinStudioController {
     if (!this.snapshotValue.localManagement) throw new TypeError('导入、编辑、删除和激活只能在 Host 本机执行')
   }
 
-  private async loadDraftAssets(fingerprint: string, manifest: SkinManifestV3, layer: ThemeLayerV2): Promise<DraftAsset[]> {
+  private async loadDraftAssets(
+    fingerprint: string,
+    manifest: SkinManifestV4,
+    layer: ThemeLayerV2,
+    visuals: SkinVisualsV1 | undefined,
+  ): Promise<DraftAsset[]> {
     const loaded = new Map<string, DraftAsset>()
     try {
       for (const declaration of manifest.assets) {
@@ -811,6 +980,11 @@ export class SkinStudioController {
           if (style.surfaceImage !== undefined) {
             style.surfaceImage.assetUrl = loaded.get(style.surfaceImage.assetUrl)?.objectUrl ?? style.surfaceImage.assetUrl
           }
+        }
+      }
+      for (const item of visuals?.items ?? []) {
+        for (const mode of [item.modes.light, item.modes.dark]) {
+          if (mode.assetUrl !== undefined) mode.assetUrl = loaded.get(mode.assetUrl)?.objectUrl ?? mode.assetUrl
         }
       }
     } catch (error) {
@@ -906,12 +1080,12 @@ function starterLayer(): ThemeLayerV2 {
   }
 }
 
-function starterManifest(name: string): SkinManifestV3 {
+function starterManifest(name: string): SkinManifestV4 {
   return {
     schemaVersion: SKIN_SCHEMA_VERSION,
     id: safeFilename(name).toLowerCase(),
     name,
-    version: '2.0.0',
+    version: '3.0.0',
     tags: [],
     themePartsVersion: THEME_PARTS_VERSION,
     capabilities: ['tokens', 'backdrop', 'component-parts'],
@@ -965,14 +1139,6 @@ async function uploadArchive(bytes: Uint8Array): Promise<void> {
   await request(`${API}/import`, { method: 'POST', body: bytes, headers: { 'Content-Type': 'application/zip' } })
 }
 
-async function fetchBytes(url: string, limit: number, label: string): Promise<Uint8Array> {
-  const response = await fetch(url, { headers: { Accept: 'application/octet-stream' } })
-  if (!response.ok) throw new Error(`${label} 加载失败 (${String(response.status)})`)
-  const bytes = new Uint8Array(await response.arrayBuffer())
-  if (bytes.byteLength === 0 || bytes.byteLength > limit) throw new TypeError(`${label} 大小无效`)
-  return bytes
-}
-
 async function request<T = unknown>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -988,7 +1154,9 @@ function safeFilename(value: string): string {
 }
 
 function sameHistory(left: DraftHistoryEntry, right: DraftHistoryEntry): boolean {
-  return left.name === right.name && JSON.stringify(left.layer) === JSON.stringify(right.layer)
+  return left.name === right.name
+    && JSON.stringify(left.layer) === JSON.stringify(right.layer)
+    && JSON.stringify(left.visuals) === JSON.stringify(right.visuals)
 }
 
 function draftChanges(baseline: DraftHistoryEntry, current: DraftHistoryEntry): readonly string[] {
@@ -997,6 +1165,7 @@ function draftChanges(baseline: DraftHistoryEntry, current: DraftHistoryEntry): 
   if (JSON.stringify(baseline.layer.tokens) !== JSON.stringify(current.layer.tokens)) changes.push('语义 Token')
   if (JSON.stringify(baseline.layer.backdrop) !== JSON.stringify(current.layer.backdrop)) changes.push('背景')
   if (JSON.stringify(baseline.layer.partStyles) !== JSON.stringify(current.layer.partStyles)) changes.push('组件外观')
+  if (JSON.stringify(baseline.visuals) !== JSON.stringify(current.visuals)) changes.push('图片与图标')
   return Object.freeze(changes)
 }
 
@@ -1011,6 +1180,15 @@ async function preloadLayerImages(layer: ThemeLayerV2): Promise<void> {
     urls.add(rule.style.dark.surfaceImage?.assetUrl)
   }
   await Promise.all([...urls].filter((url): url is string => url !== undefined).map(preloadImage))
+}
+
+async function preloadVisualImages(visuals: SkinVisualsV1): Promise<void> {
+  const urls = new Set<string>()
+  for (const item of visuals.items) {
+    if (item.modes.light.assetUrl !== undefined) urls.add(item.modes.light.assetUrl)
+    if (item.modes.dark.assetUrl !== undefined) urls.add(item.modes.dark.assetUrl)
+  }
+  await Promise.all([...urls].map(preloadImage))
 }
 
 function preloadImage(url: string): Promise<void> {

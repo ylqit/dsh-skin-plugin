@@ -11,7 +11,7 @@ afterEach(async () => {
   while (roots.length > 0) await rm(roots.pop() as string, { recursive: true, force: true })
 })
 
-it('opens only the new skins-v3 storage namespace', async () => {
+it('opens only the schema-v4 storage namespace', async () => {
   const home = await mkdtemp(join(tmpdir(), 'dsh-skin-home-'))
   roots.push(home)
   const requested: string[][] = []
@@ -36,5 +36,5 @@ it('opens only the new skins-v3 storage namespace', async () => {
 
   await apply(context as never)
 
-  expect(requested).toEqual([['skins-v3']])
+  expect(requested).toEqual([['skins-v4']])
 })

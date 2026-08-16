@@ -1,10 +1,9 @@
 {
   "id": "pikachu-energy",
   "name": "皮卡丘电能",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "author": "DSH Skin Demo",
-  "description": "黄色电能界面、能量顶栏与闪电浮动徽章。",
+  "description": "通透电能背景、分层玻璃表面与电系组件标志。",
   "tags": ["yellow", "electric", "demo"],
-  "preview": { "light": "assets/backdrop-light.webp", "dark": "assets/backdrop-dark.webp" },
-  "placements": ["skin.shell.top", "skin.shell.floating"]
+  "preview": { "light": "assets/backdrop-light.webp", "dark": "assets/backdrop-dark.webp" }
 }

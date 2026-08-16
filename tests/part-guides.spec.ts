@@ -119,6 +119,11 @@ describe('guide asset route', () => {
     expect(JSON.parse(response.body.toString('utf8'))).toMatchObject({ ok: false, error: 'Skin endpoint not found' })
   })
 
+  it('does not expose the removed executable experience route', async () => {
+    const response = await request(`/api/dsh-skin/experience/${'a'.repeat(64)}/client.js`)
+    expect(response.status).toBe(404)
+  })
+
   it.each([
     '/api/dsh-skin/guides/unknown.webp',
     '/api/dsh-skin/guides/%2e%2e%2fshell.webp',

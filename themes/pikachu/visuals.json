@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "items": [
+    {
+      "id": "pikachu-energy-mark",
+      "slot": "conversation.composer-mark",
+      "template": "status-chip",
+      "label": "电能",
+      "value": "READY",
+      "modes": {
+        "light": { "assetUrl": "asset:assets/element-mark.png", "fit": "contain", "positionX": 0.5, "positionY": 0.5, "foreground": "#342d12", "background": "rgba(255,249,217,0.80)" },
+        "dark": { "assetUrl": "asset:assets/element-mark.png", "fit": "contain", "positionX": 0.5, "positionY": 0.5, "foreground": "#fff9d2", "background": "rgba(33,31,16,0.82)" }
+      }
+    }
+  ]
+}

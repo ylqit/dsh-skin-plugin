@@ -1,10 +1,9 @@
 {
   "id": "squirtle-water",
   "name": "杰尼龟水舱",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "author": "DSH Skin Demo",
-  "description": "蓝色水舱界面、气泡浮层与水压底部状态条。",
+  "description": "通透水舱背景、分层玻璃表面与水系组件标志。",
   "tags": ["blue", "water", "demo"],
-  "preview": { "light": "assets/backdrop-light.webp", "dark": "assets/backdrop-dark.webp" },
-  "placements": ["skin.shell.bottom", "skin.shell.floating"]
+  "preview": { "light": "assets/backdrop-light.webp", "dark": "assets/backdrop-dark.webp" }
 }

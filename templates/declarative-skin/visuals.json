@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "items": [
+    {
+      "id": "partner-mark",
+      "slot": "conversation.composer-mark",
+      "template": "image-mark",
+      "label": "Theme mark",
+      "modes": {
+        "light": { "assetUrl": "asset:assets/mark-light.webp", "fit": "contain", "positionX": 0.5, "positionY": 0.5 },
+        "dark": { "assetUrl": "asset:assets/mark-dark.webp", "fit": "contain", "positionX": 0.5, "positionY": 0.5 }
+      }
+    }
+  ]
+}
