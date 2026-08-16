@@ -82,7 +82,10 @@ async function dispatch(
   streams: Set<ServerResponse>,
 ): Promise<void> {
   const method = request.method ?? 'GET'
-  const pathname = new URL(request.url ?? '/', 'http://dsh.local').pathname
+  const requestUrl = request.url ?? '/'
+  const rawPathname = requestUrl.split('?', 1)[0] ?? '/'
+  const pathname = new URL(requestUrl, 'http://dsh.local').pathname
+  const guideNamespace = rawPathname === `${PREFIX}/guides` || rawPathname.startsWith(`${PREFIX}/guides/`)
   if (method === 'GET' && pathname === `${PREFIX}/state`) {
     json(response, 200, { ok: true, value: library.snapshot() })
     return
@@ -128,6 +131,7 @@ async function dispatch(
     response.end(bytes)
     return
   }
+  if (guideNamespace) throw new HttpError(404, 'Skin endpoint not found')
   const experienceMatch = new RegExp(`^${PREFIX}/experience/(${FINGERPRINT})/client\\.js$`).exec(pathname)
   if (method === 'GET' && experienceMatch !== null) {
     const experience = library.experience(experienceMatch[1] as string)

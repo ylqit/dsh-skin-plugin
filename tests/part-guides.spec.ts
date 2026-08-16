@@ -50,11 +50,11 @@ describe('guide asset route', () => {
     return handler
   }
 
-  async function request(pathname: string): Promise<{ status: number; headers: Record<string, string | number>; body: Buffer }> {
+  async function request(pathname: string, remoteAddress = '127.0.0.1', method = 'GET'): Promise<{ status: number; headers: Record<string, string | number>; body: Buffer }> {
     const handler = await service()
     const incoming = Readable.from([])
-    Object.assign(incoming, { method: 'GET', url: pathname, headers: {} })
-    Object.defineProperty(incoming, 'socket', { value: { remoteAddress: '127.0.0.1' } })
+    Object.assign(incoming, { method, url: pathname, headers: {} })
+    Object.defineProperty(incoming, 'socket', { value: { remoteAddress } })
     let status = 0
     let headers: Record<string, string | number> = {}
     const chunks: Buffer[] = []
@@ -96,6 +96,22 @@ describe('guide asset route', () => {
     '/api/dsh-skin/guides/dialog.png',
   ])('returns 404 without reading an unapproved path: %s', async (pathname) => {
     const response = await request(pathname)
+    expect(response.status).toBe(404)
+    expect(JSON.parse(response.body.toString('utf8'))).toMatchObject({ ok: false, error: 'Skin endpoint not found' })
+  })
+
+  it.each([
+    '/api/dsh-skin/guides/unknown.webp',
+    '/api/dsh-skin/guides/%2e%2e%2fshell.webp',
+    '/api/dsh-skin/guides/%2e%2e/shell.webp',
+  ])('keeps unknown guide paths at 404 before loopback mutation authorization: %s', async (pathname) => {
+    const response = await request(pathname, '203.0.113.10')
+    expect(response.status).toBe(404)
+    expect(JSON.parse(response.body.toString('utf8'))).toMatchObject({ ok: false, error: 'Skin endpoint not found' })
+  })
+
+  it('rejects writes to the read-only guide namespace before mutation authorization', async () => {
+    const response = await request('/api/dsh-skin/guides/shell.webp', '203.0.113.10', 'POST')
     expect(response.status).toBe(404)
     expect(JSON.parse(response.body.toString('utf8'))).toMatchObject({ ok: false, error: 'Skin endpoint not found' })
   })
