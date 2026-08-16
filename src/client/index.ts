@@ -19,7 +19,7 @@ export function apply(rawContext: unknown): void {
     || typeof ctx.modules.import !== 'function'
     || typeof ctx.modules.invalidate !== 'function'
   ) {
-    throw new Error('dsh-skin-plugin 0.3.0 requires the current DSH web client (theme, slots and modules services)')
+    throw new Error('dsh-skin-plugin 0.3.1 requires the current DSH web client (theme, slots and modules services)')
   }
   const experience = new SkinExperienceRuntime(ctx.modules)
   const controller = new SkinStudioController(ctx.theme, ctx.connection.isLoopback, experience)
