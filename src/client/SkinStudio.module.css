@@ -597,6 +597,7 @@
 
   .partNavigation > summary span { color: var(--dsw-alias-label-tertiary); font-size: 9px; font-weight: 400; }
   .partNavigationBody { max-height: 180px; }
+  .partNavigation:not([open]) .partNavigationBody { display: none; }
   .componentDetail { padding: 11px 10px 20px; }
   .propertyGrid,
   .backdropFields { grid-template-columns: 1fr; }

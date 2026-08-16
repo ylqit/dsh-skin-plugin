@@ -12,6 +12,7 @@ import { parseSkinArchive } from '../src/host/archive.ts'
 import { registerSkinHttp, type SkinWebServer } from '../src/host/http.ts'
 import { SkinLibrary } from '../src/host/library.ts'
 import { SkinStudioController } from '../src/client/controller.ts'
+import { SkinExperienceRuntime } from '../src/client/experience-runtime.ts'
 import type { ThemeService } from '../src/client/contracts.ts'
 import type { SkinHostState, ThemeLayerV2 } from '../src/shared/contracts.ts'
 
@@ -484,6 +485,94 @@ describe('overlay skin data chain', () => {
     })
     expect(previewStyle()?.textContent).toContain('#4f8f3a')
     expect(experience.install).toHaveBeenLastCalledWith(descriptor, fingerprint)
+  })
+
+  it('keeps a resumed draft Experience when the cancelled active restore finishes late', async () => {
+    const activeFingerprint = '7'.repeat(64)
+    const draftFingerprint = '8'.repeat(64)
+    const activeDescriptor = {
+      apiVersion: 1 as const,
+      moduleId: 'dsh-skin:00000000-0000-4000-8000-000000000007',
+      url: `/api/dsh-skin/experience/${activeFingerprint}/client.js`,
+      rev: activeFingerprint,
+      placements: ['skin.shell.floating'] as const,
+      assets: {},
+    }
+    const draftDescriptor = {
+      ...activeDescriptor,
+      moduleId: 'dsh-skin:00000000-0000-4000-8000-000000000008',
+      url: `/api/dsh-skin/experience/${draftFingerprint}/client.js`,
+      rev: draftFingerprint,
+    }
+    const component = (): null => null
+    const moduleExports = new Map<string, unknown>([
+      [activeDescriptor.moduleId, { apiVersion: 1, components: { 'skin.shell.floating': component } }],
+      [draftDescriptor.moduleId, { apiVersion: 1, components: { 'skin.shell.floating': component } }],
+    ])
+    const modules = {
+      version: 'client' as const,
+      import: vi.fn(async (specifier: string) => moduleExports.get(specifier)),
+      invalidate: vi.fn(),
+    }
+    let deferActiveRestore = false
+    let finishActiveRestore: (() => void) | undefined
+    const runtime = new SkinExperienceRuntime(modules, async (descriptor) => {
+      if (!deferActiveRestore || descriptor.moduleId !== activeDescriptor.moduleId) return
+      await new Promise<void>(resolve => { finishActiveRestore = resolve })
+    })
+    const activeLayer = theme('Active')
+    const draftLayer = theme('Draft')
+    const draftSource = {
+      fingerprint: draftFingerprint,
+      source: 'local' as const,
+      manifest: {
+        schemaVersion: 3 as const,
+        id: 'race-draft', name: 'Race Draft', version: '2.0.0', tags: [], themePartsVersion: 2 as const,
+        capabilities: ['tokens', 'component-experience'] as const, assets: [],
+        experience: {
+          apiVersion: 1 as const, moduleId: draftDescriptor.moduleId, entry: 'experience/client.js' as const,
+          sha256: '0'.repeat(64), bytes: 17, placements: draftDescriptor.placements,
+        },
+      },
+      layer: draftLayer,
+      experience: draftDescriptor,
+    }
+    vi.stubGlobal('EventSource', undefined)
+    installInstantImages()
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const path = String(input)
+      if (path.endsWith('/state')) return envelope({
+        activationRevision: 1,
+        activeFingerprint,
+        activeLayer,
+        activeExperience: activeDescriptor,
+        skins: [],
+      } satisfies SkinHostState)
+      if (path.endsWith(`/skins/${draftFingerprint}`)) return envelope(draftSource)
+      if (path === draftDescriptor.url) return new Response('export default {}')
+      throw new Error(`unexpected test request ${path}`)
+    }))
+    const controller = new SkinStudioController(themeService(), true, runtime)
+    const dispose = controller.start()
+    await vi.waitFor(() => { expect(runtime.getSnapshot()?.descriptor.moduleId).toBe(activeDescriptor.moduleId) })
+
+    controller.beginDraft(draftFingerprint)
+    await vi.waitFor(() => { expect(runtime.getSnapshot()?.descriptor.moduleId).toBe(draftDescriptor.moduleId) })
+    controller.updateToken('--dsw-alias-brand-primary', 'light', '#68b34f')
+    deferActiveRestore = true
+    controller.cancelPreview()
+    expect(finishActiveRestore).toBeTypeOf('function')
+    controller.resumePreview()
+    await vi.waitFor(() => { expect(controller.getSnapshot().previewing).toBe(true) })
+    expect(previewStyle()?.textContent).toContain('#68b34f')
+    expect(runtime.getSnapshot()?.descriptor.moduleId).toBe(draftDescriptor.moduleId)
+
+    finishActiveRestore?.()
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    expect(previewStyle()?.textContent).toContain('#68b34f')
+    expect(runtime.getSnapshot()).toMatchObject({ descriptor: draftDescriptor, themeId: draftFingerprint })
+    expect(modules.invalidate).not.toHaveBeenCalledWith(draftDescriptor.moduleId)
+    dispose()
   })
 
   it('keeps component assets when backdrop images are replaced in Studio', async () => {

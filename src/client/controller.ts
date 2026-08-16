@@ -329,7 +329,7 @@ export class SkinStudioController {
   }
 
   cancelPreview(): void {
-    this.previewGeneration += 1
+    const generation = ++this.previewGeneration
     const previous = this.previewLane
     if (previous !== undefined) {
       previous.disposeTheme?.()
@@ -338,7 +338,7 @@ export class SkinStudioController {
       syncBackdropFlag(this.activeLane?.layer)
       this.set({ previewing: false, error: undefined })
     }
-    void this.restoreActiveExperience()
+    void this.restoreActiveExperience(generation)
   }
 
   resumePreview(): void {
@@ -556,13 +556,13 @@ export class SkinStudioController {
     this.presentHistory(next)
   }
 
-  private async restoreActiveExperience(): Promise<void> {
+  private async restoreActiveExperience(expectedPreviewGeneration: number): Promise<void> {
     try {
       const active = this.activeLane
       if (active?.experience === undefined) this.experience?.clear()
       else await this.experience?.install(active.experience, active.themeId)
     } catch (error) {
-      this.fail(error)
+      if (expectedPreviewGeneration === this.previewGeneration) this.fail(error)
     }
   }
 

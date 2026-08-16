@@ -204,4 +204,30 @@ describe('SkinStudio layout contract', () => {
     expect(source).toContain("position: 'fixed'")
     expect(source).toContain('role="tablist"')
   })
+
+  it('lets a compact component directory actually collapse when details is closed', async () => {
+    const source = await readFile(join(process.cwd(), 'src/client/SkinStudio.module.css'), 'utf8')
+    const bodyRule = source.match(/\.partNavigationBody\s*\{[^}]*\}/s)?.[0] ?? ''
+    const closedRule = source.match(/\.partNavigation:not\(\[open\]\)\s+\.partNavigationBody\s*\{[^}]*\}/s)?.[0] ?? ''
+    const style = document.createElement('style')
+    style.textContent = `${bodyRule}\n${closedRule}`
+    document.head.append(style)
+    const details = document.createElement('details')
+    details.className = 'partNavigation'
+    const summary = document.createElement('summary')
+    summary.textContent = '组件目录'
+    const body = document.createElement('div')
+    body.className = 'partNavigationBody'
+    details.append(summary, body)
+    document.body.append(details)
+
+    try {
+      expect(getComputedStyle(body).display).toBe('none')
+      details.open = true
+      expect(getComputedStyle(body).display).toBe('flex')
+    } finally {
+      details.remove()
+      style.remove()
+    }
+  })
 })

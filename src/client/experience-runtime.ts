@@ -42,13 +42,13 @@ export class SkinExperienceRuntime {
   }
 
   async install(descriptor: SkinExperienceDescriptor, themeId: string): Promise<void> {
+    const generation = ++this.generation
     const current = this.snapshotValue
     if (current?.descriptor.moduleId === descriptor.moduleId && current.descriptor.rev === descriptor.rev) {
       this.publish({ ...current, descriptor, themeId })
       return
     }
 
-    const generation = ++this.generation
     if (current?.descriptor.moduleId === descriptor.moduleId) {
       this.cleanupModule(current.descriptor.moduleId)
       this.publish(undefined)
