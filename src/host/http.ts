@@ -86,6 +86,21 @@ async function dispatch(
   const rawPathname = requestUrl.split('?', 1)[0] ?? '/'
   const pathname = new URL(requestUrl, 'http://dsh.local').pathname
   const guideNamespace = rawPathname === `${PREFIX}/guides` || rawPathname.startsWith(`${PREFIX}/guides/`)
+  if (guideNamespace) {
+    const guideMatch = new RegExp(`^${PREFIX}/guides/(${ASSET_NAME})$`).exec(rawPathname)
+    if (method === 'GET' && guideMatch !== null && GUIDE_NAMES.has(guideMatch[1] as string)) {
+      const bytes = await readFile(join(guidesRoot, guideMatch[1] as string))
+      response.writeHead(200, {
+        'Content-Type': 'image/webp',
+        'Content-Length': bytes.byteLength,
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'X-Content-Type-Options': 'nosniff',
+      })
+      response.end(bytes)
+      return
+    }
+    throw new HttpError(404, 'Skin endpoint not found')
+  }
   if (method === 'GET' && pathname === `${PREFIX}/state`) {
     json(response, 200, { ok: true, value: library.snapshot() })
     return
@@ -119,19 +134,6 @@ async function dispatch(
     response.end(asset.bytes)
     return
   }
-  const guideMatch = new RegExp(`^${PREFIX}/guides/(${ASSET_NAME})$`).exec(pathname)
-  if (method === 'GET' && guideMatch !== null && GUIDE_NAMES.has(guideMatch[1] as string)) {
-    const bytes = await readFile(join(guidesRoot, guideMatch[1] as string))
-    response.writeHead(200, {
-      'Content-Type': 'image/webp',
-      'Content-Length': bytes.byteLength,
-      'Cache-Control': 'public, max-age=31536000, immutable',
-      'X-Content-Type-Options': 'nosniff',
-    })
-    response.end(bytes)
-    return
-  }
-  if (guideNamespace) throw new HttpError(404, 'Skin endpoint not found')
   const experienceMatch = new RegExp(`^${PREFIX}/experience/(${FINGERPRINT})/client\\.js$`).exec(pathname)
   if (method === 'GET' && experienceMatch !== null) {
     const experience = library.experience(experienceMatch[1] as string)

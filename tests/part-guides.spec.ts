@@ -18,6 +18,10 @@ afterEach(async () => {
 
 describe('Theme Parts v2 guide catalog', () => {
   it('covers every registered part with valid real-image highlights', () => {
+    expect(PART_GUIDE_FILENAMES).toEqual([
+      'shell.webp', 'conversation.webp', 'details.webp', 'menu.webp',
+      'dialog.webp', 'tooltip.webp', 'settings.webp',
+    ])
     expect(Object.keys(THEME_PART_GUIDES).sort()).toEqual(Object.keys(THEME_PART_CATALOG).sort())
     expect(Object.keys(THEME_PART_GUIDES)).toHaveLength(Object.keys(THEME_PART_CATALOG).length)
 
@@ -33,6 +37,12 @@ describe('Theme Parts v2 guide catalog', () => {
       expect(guide.highlight.x + guide.highlight.width, part).toBeLessThanOrEqual(1)
       expect(guide.highlight.y + guide.highlight.height, part).toBeLessThanOrEqual(1)
     }
+
+    expect(THEME_PART_GUIDES['conversation.message'].filename).toBe('conversation.webp')
+    expect(THEME_PART_GUIDES['conversation.message-content'].filename).toBe('conversation.webp')
+    expect(THEME_PART_GUIDES['tool.card'].filename).toBe('conversation.webp')
+    expect(THEME_PART_GUIDES['shell.details'].filename).toBe('details.webp')
+    expect(THEME_PART_GUIDES['primitive.tooltip'].filename).toBe('tooltip.webp')
   })
 })
 
@@ -89,6 +99,15 @@ describe('guide asset route', () => {
     expect(response.body).toEqual(await readFile(join(guidesRoot, 'shell.webp')))
   })
 
+  it.each(['conversation.webp', 'details.webp', 'tooltip.webp'])('serves the additional real DSH guide: %s', async (filename) => {
+    const response = await request(`/api/dsh-skin/guides/${filename}`)
+    expect(response.status).toBe(200)
+    expect(response.headers['Content-Type']).toBe('image/webp')
+    expect(response.body.subarray(0, 4).toString('ascii')).toBe('RIFF')
+    expect(response.body.subarray(8, 12).toString('ascii')).toBe('WEBP')
+    expect(response.body).toEqual(await readFile(join(guidesRoot, filename)))
+  })
+
   it.each([
     '/api/dsh-skin/guides/unknown.webp',
     '/api/dsh-skin/guides/%2e%2e%2fshell.webp',
@@ -112,6 +131,21 @@ describe('guide asset route', () => {
 
   it('rejects writes to the read-only guide namespace before mutation authorization', async () => {
     const response = await request('/api/dsh-skin/guides/shell.webp', '203.0.113.10', 'POST')
+    expect(response.status).toBe(404)
+    expect(JSON.parse(response.body.toString('utf8'))).toMatchObject({ ok: false, error: 'Skin endpoint not found' })
+  })
+
+  it.each(
+    ['127.0.0.1', '203.0.113.10'].flatMap(remoteAddress =>
+      ['../', '%2e%2e/'].flatMap(segment => [
+        [`/api/dsh-skin/guides/${segment}state`, remoteAddress],
+        [`/api/dsh-skin/guides/${segment}events`, remoteAddress],
+        [`/api/dsh-skin/guides/${segment}skins/${'a'.repeat(64)}`, remoteAddress],
+        [`/api/dsh-skin/guides/${segment}assets/${'a'.repeat(64)}/x.png`, remoteAddress],
+      ]),
+    ),
+  )('does not let a raw guide path escape into another endpoint: %s from %s', async (pathname, remoteAddress) => {
+    const response = await request(pathname, remoteAddress)
     expect(response.status).toBe(404)
     expect(JSON.parse(response.body.toString('utf8'))).toMatchObject({ ok: false, error: 'Skin endpoint not found' })
   })
