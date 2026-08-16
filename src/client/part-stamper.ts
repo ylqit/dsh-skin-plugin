@@ -251,12 +251,15 @@ function syncBackdropSurfaces(registry: StampedRegistry): void {
   const frame = overlay?.parentElement
   if (frame instanceof HTMLElement) {
     surfaces.push(frame)
+    const columns = [...frame.children].filter(child => !(child instanceof HTMLElement)
+      || (!child.hasAttribute('data-shell-overlay') && !child.hasAttribute('data-side')))
+    const center = columns[1]
     // Slot anchors are display:contents and Experience portals can add
     // children. Select the DSH-owned painted roots by their semantic DOM
     // contracts instead of by child position.
-    const conversation = frame.querySelector('[data-slot="conversation"] > [data-phase]')
+    const conversation = center?.querySelector('[data-slot="conversation"] > [data-phase]')
     if (conversation instanceof HTMLElement) surfaces.push(conversation)
-    const details = frame.querySelector('[data-slot="details"] > :not([data-dsh-skin-experience-mount])')
+    const details = columns[2]?.querySelector('[data-slot="details"] > :not([data-dsh-skin-experience-mount])')
     if (details instanceof HTMLElement) surfaces.push(details)
   }
   if (!document.body.hasAttribute(BACKDROP_FLAG)) {

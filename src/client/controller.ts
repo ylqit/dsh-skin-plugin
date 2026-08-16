@@ -33,7 +33,6 @@ interface DraftHistoryEntry {
 interface PresentationLane {
   key: string
   themeId: string
-  skinId?: string
   layer?: ThemeLayerV2
   experience?: SkinExperienceDescriptor
   disposeTheme?: () => void
@@ -41,7 +40,7 @@ interface PresentationLane {
 }
 
 interface ExperiencePresenter {
-  install(descriptor: SkinExperienceDescriptor, themeId: string, skinId?: string): Promise<void>
+  install(descriptor: SkinExperienceDescriptor, themeId: string): Promise<void>
   clear(): void
   setMode(mode: 'light' | 'dark'): void
 }
@@ -129,7 +128,6 @@ export class SkinStudioController {
         return
       }
       const source = await request<SkinDraftDescriptor>(`${API}/skins/${fingerprint}`)
-      const skinId = source.manifest.id
       const draft = structuredClone(source.layer)
       const assets = await this.loadDraftAssets(source.fingerprint, source.manifest, draft)
       const experienceBytes = source.experience === undefined
@@ -143,7 +141,7 @@ export class SkinStudioController {
       this.draftManifest = manifest
       this.draftExperienceBytes = experienceBytes
       if (source.experience === undefined) this.experience?.clear()
-      else await this.experience?.install(source.experience, source.fingerprint, skinId)
+      else await this.experience?.install(source.experience, source.fingerprint)
       this.replaceDraft(draft, manifest.name, assets)
     })
   }
@@ -363,13 +361,10 @@ export class SkinStudioController {
       : `${committed.fingerprint}:${String(committed.activationRevision)}`
     if (this.activeLane?.key === key && this.previewLane === undefined) return
 
-    const skinId = committed.fingerprint === undefined
-      ? undefined
-      : this.snapshotValue.host?.skins.find(skin => skin.fingerprint === committed.fingerprint)?.id
     if (committed.layer !== undefined) await preloadLayerImages(committed.layer)
     if (expectedGeneration !== undefined && expectedGeneration !== this.refreshGeneration) return
     if (committed.experience === undefined || committed.fingerprint === undefined) this.experience?.clear()
-    else await this.experience?.install(committed.experience, committed.fingerprint, skinId)
+    else await this.experience?.install(committed.experience, committed.fingerprint)
     if (expectedGeneration !== undefined && expectedGeneration !== this.refreshGeneration) return
     const presentation = committed.layer === undefined || committed.fingerprint === undefined
       ? undefined
@@ -387,7 +382,6 @@ export class SkinStudioController {
       this.activeLane = {
         key,
         themeId: committed.fingerprint ?? 'harness-default',
-        ...(skinId === undefined ? {} : { skinId }),
         ...(committed.layer === undefined ? {} : { layer: committed.layer }),
         ...(committed.experience === undefined ? {} : { experience: committed.experience }),
         ...(presentation === undefined ? {} : {
@@ -411,11 +405,7 @@ export class SkinStudioController {
     }
     await preloadLayerImages(prepared.layer)
     if (prepared.experience === undefined) this.experience?.clear()
-    else await this.experience?.install(
-      prepared.experience,
-      prepared.fingerprint,
-      this.snapshotValue.host?.skins.find(skin => skin.fingerprint === prepared.fingerprint)?.id,
-    )
+    else await this.experience?.install(prepared.experience, prepared.fingerprint)
     this.replacePreview(prepared.layer, prepared.fingerprint)
   }
 
@@ -523,7 +513,7 @@ export class SkinStudioController {
     try {
       const active = this.activeLane
       if (active?.experience === undefined) this.experience?.clear()
-      else await this.experience?.install(active.experience, active.themeId, active.skinId)
+      else await this.experience?.install(active.experience, active.themeId)
     } catch (error) {
       this.fail(error)
     }

@@ -312,6 +312,29 @@ describe('part anchor shim', () => {
     expect(conversationRoot.style.background).toBe('var(--dsw-alias-bg-base)')
   })
 
+  it('ignores backdrop surface decoys outside the resolved frame center', async () => {
+    buildShellFixture()
+    const frame = document.querySelector<HTMLElement>('[data-shell-overlay]')?.parentElement as HTMLElement
+    const sidebarColumn = frame.children[0] as HTMLElement
+    const center = frame.children[1] as HTMLElement
+    const conversationRoot = center.querySelector<HTMLElement>('[data-slot="conversation"] > [data-phase]') as HTMLElement
+    const decoySlot = document.createElement('div')
+    decoySlot.dataset.slot = 'conversation'
+    const decoy = document.createElement('div')
+    decoy.dataset.phase = 'decoy'
+    decoySlot.append(decoy)
+    sidebarColumn.prepend(decoySlot)
+    decoy.style.background = 'rgb(9, 9, 9)'
+    conversationRoot.style.background = 'var(--dsw-alias-bg-base)'
+    document.body.setAttribute('data-dsh-skin-backdrop', '1')
+
+    dispose = startPartStamper()
+    await tick()
+
+    expect(conversationRoot.style.background).toBe('transparent')
+    expect(decoy.style.background).toBe('rgb(9, 9, 9)')
+  })
+
   it('restores a detached surface before forgetting ownership and restores it again after reattach', async () => {
     buildShellFixture()
     const slot = document.querySelector<HTMLElement>('[data-slot="conversation"]') as HTMLElement

@@ -17,6 +17,10 @@ const PORTAL_TARGETS: Partial<Record<SkinPlacement, { selector: string; prepend:
   'skin.composer.decorator': { selector: '[data-dsh-theme-part="conversation.composer"]', prepend: false },
 }
 
+// Immutable provenance of the shipped 0.3.1 Bulbasaur Experience. The archive
+// regression test reads the builtin so an intentional rebuild must update both.
+const BULBASAUR_GROWTH_MODULE_ID = 'dsh-skin:38903c3b-1fc9-4276-892d-760496ff7a77'
+
 /** Renders only plugin-owned decorations; DSH business components remain untouched. */
 export function SkinExperienceHost({ useExperience }: SkinExperienceHostInjected): ReactNode {
   const active = useExperience(state => state)
@@ -46,9 +50,7 @@ function usePlacementMounts(active: ActiveSkinExperience | undefined): Partial<R
   const placementKey = useMemo(() => active?.descriptor.placements.join('\n') ?? '', [active?.descriptor.placements])
   const moduleId = active?.descriptor.moduleId
   const revision = active?.descriptor.rev
-  // The controller resolves this stable manifest id before fingerprints and
-  // generated module UUIDs cross into the Experience runtime.
-  const sidebarBrandVariant = active?.skinId === 'bulbasaur-growth' ? 'bulbasaur-growth' : undefined
+  const sidebarBrandVariant = moduleId === BULBASAUR_GROWTH_MODULE_ID ? 'bulbasaur-growth' : undefined
   useEffect(() => {
     const owned = new Map<SkinPlacement, HTMLElement>()
     const placements = new Set(active?.descriptor.placements.filter(placement => PORTAL_TARGETS[placement] !== undefined) ?? [])

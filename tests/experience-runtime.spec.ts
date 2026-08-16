@@ -107,22 +107,4 @@ describe('SkinExperienceRuntime', () => {
     await runtime.install(skin, 'managed')
     expect(scriptUrl).toContain(`/api/dsh-skin/experience/${'f'.repeat(64)}/client.js?rev=${'f'.repeat(64)}`)
   })
-
-  it('retains the stable internal manifest id separately from the presentation fingerprint', async () => {
-    const runtime = new SkinExperienceRuntime({
-      version: 'client',
-      import: async () => ({
-        apiVersion: 1,
-        components: { 'skin.shell.floating': (): null => null },
-      }),
-      invalidate: vi.fn(),
-    }, async () => {})
-
-    await runtime.install(descriptor('identified-skin', '1'.repeat(64)), '2'.repeat(64), 'bulbasaur-growth')
-
-    expect(runtime.getSnapshot()).toMatchObject({
-      themeId: '2'.repeat(64),
-      skinId: 'bulbasaur-growth',
-    })
-  })
 })

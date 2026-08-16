@@ -196,9 +196,14 @@ describe('SkinExperienceHost', () => {
     expect(source).toMatch(/\.sidebarBrand\[data-dsh-skin-experience-variant=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*>\s*i[\s\S]*\.sidebarBrand\[data-dsh-skin-experience-variant=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*>\s*div\s*\{[^}]*display:\s*none\s*!important;/s)
   })
 
-  it('recognizes the shipped Bulbasaur through the controller independently of its archive fingerprint', async () => {
+  it('recognizes a Studio copy that preserves the shipped Bulbasaur Experience module', async () => {
     const builtin = parseSkinArchive(new Uint8Array(readFileSync(resolve('builtins/bulbasaur-growth.dshskin'))))
-    const descriptor = builtin.experience as SkinExperienceDescriptor
+    const builtinDescriptor = builtin.experience as SkinExperienceDescriptor
+    const copyFingerprint = 'c'.repeat(64)
+    const descriptor: SkinExperienceDescriptor = {
+      ...builtinDescriptor,
+      url: `/api/dsh-skin/experience/${copyFingerprint}/client.js`,
+    }
     const bundle = new TextDecoder().decode(builtin.files.get('experience/client.js'))
     function LeafBrand(): ReturnType<typeof createElement> {
       return createElement('div', null, createElement('i'), createElement('span', null, 'leaf'))
@@ -226,15 +231,15 @@ describe('SkinExperienceHost', () => {
       selector(useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot))
     const host: SkinHostState = {
       activationRevision: 1,
-      activeFingerprint: builtin.fingerprint,
+      activeFingerprint: copyFingerprint,
       activeExperience: descriptor,
       skins: [{
-        fingerprint: builtin.fingerprint,
-        id: builtin.manifest.id,
+        fingerprint: copyFingerprint,
+        id: `${builtin.manifest.id}-custom`,
         name: builtin.manifest.name,
         version: builtin.manifest.version,
         capabilities: builtin.manifest.capabilities,
-        source: 'builtin',
+        source: 'local',
         tags: builtin.manifest.tags ?? [],
         parts: [],
         experience: descriptor,
@@ -250,7 +255,6 @@ describe('SkinExperienceHost', () => {
     }, true, runtime)
 
     let variant: string | undefined
-    let runtimeSkinId: string | undefined
     let runtimeThemeId: string | undefined
     let disposeController = (): void => {}
     try {
@@ -258,9 +262,8 @@ describe('SkinExperienceHost', () => {
         root.render(createElement(SkinExperienceHost, { useExperience }))
         disposeController = controller.start()
         await vi.waitFor(() => {
-          runtimeSkinId = runtime.getSnapshot()?.skinId
           runtimeThemeId = runtime.getSnapshot()?.themeId
-          expect(runtimeSkinId).toBe('bulbasaur-growth')
+          expect(runtimeThemeId).toBe(copyFingerprint)
         })
       })
       variant = sidebarRoot.querySelector<HTMLElement>(
@@ -276,12 +279,86 @@ describe('SkinExperienceHost', () => {
     expect(builtin.manifest.id).toBe('bulbasaur-growth')
     expect(builtin.fingerprint).toMatch(/^[a-f0-9]{64}$/)
     expect(builtin.fingerprint).not.toBe('bulbasaur-growth')
-    expect(descriptor.moduleId).toMatch(/^dsh-skin:[0-9a-f-]{36}$/)
+    expect(builtinDescriptor.moduleId).toBe('dsh-skin:38903c3b-1fc9-4276-892d-760496ff7a77')
+    expect(descriptor.moduleId).toBe(builtinDescriptor.moduleId)
     expect(bundle).toContain('function LeafBrand()')
     expect(bundle).toContain('function GrowthHero(')
-    expect(runtimeThemeId).toBe(builtin.fingerprint)
-    expect(runtimeSkinId).toBe('bulbasaur-growth')
+    expect(runtimeThemeId).toBe(copyFingerprint)
     expect(variant).toBe('bulbasaur-growth')
+  })
+
+  it('does not recognize a different Experience module that reuses the Bulbasaur manifest id', async () => {
+    const builtin = parseSkinArchive(new Uint8Array(readFileSync(resolve('builtins/bulbasaur-growth.dshskin'))))
+    const fingerprint = 'd'.repeat(64)
+    const descriptor: SkinExperienceDescriptor = {
+      ...(builtin.experience as SkinExperienceDescriptor),
+      moduleId: 'dsh-skin:different-experience-module',
+      rev: 'd'.repeat(64),
+      url: `/api/dsh-skin/experience/${fingerprint}/client.js`,
+    }
+    const runtime = new SkinExperienceRuntime({
+      version: 'client',
+      import: async () => ({
+        apiVersion: 1,
+        components: {
+          'skin.sidebar.brand': (): ReturnType<typeof createElement> => createElement('div', null, 'other brand'),
+          'skin.conversation.hero': (): ReturnType<typeof createElement> => createElement('div', null, 'other hero'),
+        },
+      }),
+      invalidate: () => {},
+    }, async () => {})
+    const sidebarRoot = document.createElement('div')
+    sidebarRoot.dataset.dshThemePart = 'shell.sidebar'
+    const rootNode = document.createElement('div')
+    document.body.append(sidebarRoot, rootNode)
+    const root = createRoot(rootNode)
+    const useExperience = <T,>(selector: (state: ReturnType<typeof runtime.getSnapshot>) => T): T =>
+      selector(useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot))
+    const host: SkinHostState = {
+      activationRevision: 1,
+      activeFingerprint: fingerprint,
+      activeExperience: descriptor,
+      skins: [{
+        fingerprint,
+        id: builtin.manifest.id,
+        name: builtin.manifest.name,
+        version: builtin.manifest.version,
+        capabilities: builtin.manifest.capabilities,
+        source: 'local',
+        tags: builtin.manifest.tags ?? [],
+        parts: [],
+        experience: descriptor,
+      }],
+    }
+    vi.stubGlobal('EventSource', undefined)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, value: host }), {
+      headers: { 'Content-Type': 'application/json' },
+    })))
+    const controller = new SkinStudioController({
+      getTheme: () => ({ active: { colorScheme: 'light' } }),
+      setTheme: vi.fn(),
+    }, true, runtime)
+
+    let disposeController = (): void => {}
+    try {
+      await act(async () => {
+        root.render(createElement(SkinExperienceHost, { useExperience }))
+        disposeController = controller.start()
+        await vi.waitFor(() => {
+          expect(runtime.getSnapshot()?.descriptor.moduleId).toBe(descriptor.moduleId)
+        })
+      })
+      const mount = sidebarRoot.querySelector<HTMLElement>(
+        '[data-dsh-skin-experience-mount="skin.sidebar.brand"]',
+      )
+      expect(mount).not.toBeNull()
+      expect(mount?.dataset.dshSkinExperienceVariant).toBeUndefined()
+    } finally {
+      await act(async () => {
+        disposeController()
+        root.unmount()
+      })
+    }
   })
 
   it('remounts a portal after the part stamper labels a replaced DSH root', async () => {
