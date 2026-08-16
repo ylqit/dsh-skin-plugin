@@ -9,7 +9,7 @@
  */
 
 /** Theme component-part contract version understood by this release. */
-export const THEME_PARTS_VERSION = 1 as const
+export const THEME_PARTS_VERSION = 2 as const
 
 /** Semantic tokens that a skin may override. */
 export const THEME_TOKEN_NAMES = Object.freeze([
@@ -42,7 +42,7 @@ export const THEME_TOKEN_NAMES = Object.freeze([
   '--dsw-specific-sidebar-nav-item-active-accent', '--dsw-specific-sidebar-nav-item-hover', '--dsw-specific-tip',
 ] as const)
 
-/** One semantic token accepted by {@link ThemeLayerDefinition}. */
+/** One semantic token accepted by {@link ThemeLayerV2}. */
 export type ThemeTokenName = typeof THEME_TOKEN_NAMES[number]
 
 /** Light and dark values for one theme field. */
@@ -62,6 +62,14 @@ export interface ThemeShadow {
   blurPx: number
   spreadPx: number
   color: ThemeColorValue
+}
+
+/** One package-owned image rendered on a component surface. */
+export interface ThemeSurfaceImage {
+  assetUrl: string
+  fit: 'cover' | 'contain'
+  positionX: number
+  positionY: number
 }
 
 /** System font stacks available to skin packages. */
@@ -87,9 +95,10 @@ export interface ThemePartStyle {
   lineHeight?: number
   letterSpacingPx?: number
   transitionDurationMs?: number
+  surfaceImage?: ThemeSurfaceImage
 }
 
-/** Public component parts available to version-1 skins. */
+/** Public component parts available to Theme Parts v2 skins. */
 export type ThemePartId =
   | 'app.root' | 'shell.backdrop' | 'shell.sidebar' | 'shell.main' | 'shell.details'
   | 'conversation.root' | 'conversation.header' | 'conversation.scroller'
@@ -99,12 +108,12 @@ export type ThemePartId =
   | 'primitive.menu-surface' | 'primitive.menu-item' | 'primitive.tooltip'
   | 'tool.card' | 'settings.panel' | 'settings.row'
 
-/** Public component variants available to version-1 skins. */
+/** Public component variants available to Theme Parts v2 skins. */
 export type ThemePartVariant =
   | 'primary' | 'ghost' | 'outline' | 'toolbar'
   | 'user' | 'assistant' | 'notice' | 'default' | 'compact'
 
-/** Public component states available to version-1 skins. */
+/** Public component states available to Theme Parts v2 skins. */
 export type ThemePartState =
   | 'hover' | 'focus-visible' | 'disabled' | 'active' | 'selected'
   | 'collapsed' | 'running' | 'success' | 'error'
@@ -128,7 +137,7 @@ export interface ThemeBackdropMode {
 }
 
 /** One complete installable skin layer. Omitted entries inherit Harness defaults. */
-export interface ThemeLayerDefinition {
+export interface ThemeLayerV2 {
   tokens: Partial<Record<ThemeTokenName, ThemeModePair<string>>>
   backdrop?: ThemeModePair<ThemeBackdropMode>
   partStyles?: readonly ThemePartRule[]
@@ -145,7 +154,7 @@ export interface ThemePartCatalogEntry {
 
 const SURFACE_PROPERTIES = Object.freeze([
   'foreground', 'background', 'borderColor', 'borderWidthPx', 'borderStyle',
-  'borderRadiusPx', 'shadows', 'opacity', 'backdropBlurPx', 'transitionDurationMs',
+  'borderRadiusPx', 'shadows', 'opacity', 'backdropBlurPx', 'transitionDurationMs', 'surfaceImage',
 ] satisfies ThemePartStyleKey[])
 const CONTENT_PROPERTIES = Object.freeze([
   ...SURFACE_PROPERTIES, 'paddingBlockPx', 'paddingInlinePx', 'gapPx', 'fontFamily',
@@ -166,7 +175,7 @@ function entry(
   return Object.freeze({ variants: Object.freeze([...variants]), states: Object.freeze([...states]), properties })
 }
 
-/** Version-1 part, variant, state, and property allowlist. */
+/** Theme Parts v2 part, variant, state, and property allowlist. */
 export const THEME_PART_CATALOG: Readonly<Record<ThemePartId, ThemePartCatalogEntry>> = Object.freeze({
   'app.root': entry(SURFACE_PROPERTIES),
   'shell.backdrop': entry(SURFACE_PROPERTIES),
@@ -201,6 +210,7 @@ const LAYER_KEYS = new Set(['tokens', 'backdrop', 'partStyles'])
 const RULE_KEYS = new Set(['part', 'variant', 'state', 'style'])
 const BACKDROP_KEYS = new Set(['assetUrl', 'fallbackColor', 'focusX', 'focusY', 'dim', 'blurPx'])
 const SHADOW_KEYS = new Set(['inset', 'xPx', 'yPx', 'blurPx', 'spreadPx', 'color'])
+const SURFACE_IMAGE_KEYS = new Set(['assetUrl', 'fit', 'positionX', 'positionY'])
 const FONT_FAMILIES = new Set<ThemeFontFamily>(['system-sans', 'rounded', 'serif', 'monospace'])
 const BORDER_STYLES = new Set(['none', 'solid', 'dashed', 'dotted'])
 const FONT_WEIGHTS = new Set([400, 500, 600, 700])
@@ -269,6 +279,21 @@ function shadow(value: unknown, subject: string): ThemeShadow {
   })
 }
 
+function surfaceImage(value: unknown, subject: string): ThemeSurfaceImage {
+  const source = record(value, subject)
+  exactKeys(source, SURFACE_IMAGE_KEYS, subject)
+  if (typeof source.assetUrl !== 'string' || !ASSET_URL.test(source.assetUrl)) {
+    throw new TypeError(`${subject}.assetUrl must be a managed skin asset URL`)
+  }
+  if (source.fit !== 'cover' && source.fit !== 'contain') throw new TypeError(`${subject}.fit must be cover or contain`)
+  return Object.freeze({
+    assetUrl: source.assetUrl,
+    fit: source.fit,
+    positionX: finite(source.positionX, `${subject}.positionX`, 0, 1),
+    positionY: finite(source.positionY, `${subject}.positionY`, 0, 1),
+  })
+}
+
 function partStyle(value: unknown, subject: string, allowed: ReadonlySet<string>): ThemePartStyle {
   const source = record(value, subject)
   exactKeys(source, STYLE_KEYS, subject)
@@ -305,6 +330,7 @@ function partStyle(value: unknown, subject: string, allowed: ReadonlySet<string>
   if (source.lineHeight !== undefined) output.lineHeight = finite(source.lineHeight, `${subject}.lineHeight`, 1.1, 1.8)
   if (source.letterSpacingPx !== undefined) output.letterSpacingPx = finite(source.letterSpacingPx, `${subject}.letterSpacingPx`, 0, 2)
   if (source.transitionDurationMs !== undefined) output.transitionDurationMs = finite(source.transitionDurationMs, `${subject}.transitionDurationMs`, 0, 400)
+  if (source.surfaceImage !== undefined) output.surfaceImage = surfaceImage(source.surfaceImage, `${subject}.surfaceImage`)
   return Object.freeze(output)
 }
 
@@ -334,7 +360,7 @@ function tokenValue(value: unknown, subject: string): string {
  * @param value - parsed JSON or another untrusted value.
  * @returns an immutable layer accepted by Host and browser runtimes.
  */
-export function validateThemeLayer(value: unknown): ThemeLayerDefinition {
+export function validateThemeLayer(value: unknown): ThemeLayerV2 {
   const source = record(value, 'theme layer')
   exactKeys(source, LAYER_KEYS, 'theme layer')
   const tokenSource = record(source.tokens, 'theme layer.tokens')
@@ -388,6 +414,7 @@ const PROPERTY_ORDER: readonly ThemePartStyleKey[] = Object.freeze([
   'foreground', 'background', 'borderColor', 'borderWidthPx', 'borderStyle', 'borderRadiusPx',
   'shadows', 'opacity', 'backdropBlurPx', 'paddingBlockPx', 'paddingInlinePx', 'gapPx',
   'fontFamily', 'fontSizePx', 'fontWeight', 'lineHeight', 'letterSpacingPx', 'transitionDurationMs',
+  'surfaceImage',
 ])
 const FONT_STACKS: Record<ThemeFontFamily, string> = {
   'system-sans': 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
@@ -428,7 +455,14 @@ function declarations(style: ThemePartStyle): string[] {
     else if (property === 'fontWeight') output.push(`font-weight:${String(value)}`)
     else if (property === 'lineHeight') output.push(`line-height:${String(value)}`)
     else if (property === 'letterSpacingPx') output.push(`letter-spacing:${String(value)}px`)
-    else output.push(`transition-duration:${String(value)}ms`)
+    else if (property === 'transitionDurationMs') output.push(`transition-duration:${String(value)}ms`)
+    else {
+      const image = value as ThemeSurfaceImage
+      output.push(`background-image:url("${image.assetUrl}")`)
+      output.push(`background-position:${String(image.positionX * 100)}% ${String(image.positionY * 100)}%`)
+      output.push(`background-size:${image.fit}`)
+      output.push('background-repeat:no-repeat')
+    }
   }
   return output
 }
@@ -469,9 +503,9 @@ export function compileThemeLayerCss(value: unknown): string {
   const previewDark: string[] = []
   const lightTokens = Object.entries(layer.tokens).map(([name, pair]) => `${name}:${pair.light}`)
   const darkTokens = Object.entries(layer.tokens).map(([name, pair]) => `${name}:${pair.dark}`)
-  // Base token sheets are intentionally unlayered. Keep skin tokens in that
-  // same cascade plane (the presentation style is later in document order),
-  // while only component/backdrop rules use the public layer ordering.
+  // The official shell paints components with unlayered CSS. Every skin rule
+  // therefore stays in the same cascade plane and wins through the later
+  // presentation style plus the explicit data-part selector.
   if (lightTokens.length > 0) tokens.push(`body:not([data-ds-dark-theme]){${lightTokens.join(';')}}`)
   if (darkTokens.length > 0) tokens.push(`body[data-ds-dark-theme]{${darkTokens.join(';')}}`)
   if (lightTokens.length > 0) tokens.push(`[data-dsh-theme-preview-mode="light"]{${lightTokens.join(';')}}`)
@@ -492,7 +526,7 @@ export function compileThemeLayerCss(value: unknown): string {
     if (darkDeclarations.length > 0) previewDark.push(`body [data-dsh-theme-preview-mode="dark"] ${selector}{${darkDeclarations.join(';')}}`)
   }
   const reduced = '@media (prefers-reduced-motion:reduce){[data-dsh-theme-part]{transition-duration:0ms}}'
-  return `${tokens.join('')}@layer dsh-active-theme{${light.join('')}${dark.join('')}${previewLight.join('')}${previewDark.join('')}${reduced}}`
+  return `${tokens.join('')}${light.join('')}${dark.join('')}${previewLight.join('')}${previewDark.join('')}${reduced}`
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { MAX_ARCHIVE_BYTES } from './archive.ts'
+import { MAX_ARCHIVE_BYTES, SkinArchiveError } from './archive.ts'
 import { SkinLibrary } from './library.ts'
 
 const PREFIX = '/api/dsh-skin'
@@ -19,6 +19,16 @@ export interface SkinWebServer {
 /** Register the same-origin management, immutable asset, and invalidation endpoints. */
 export function registerSkinHttp(server: SkinWebServer, library: SkinLibrary): () => void {
   const streams = new Set<ServerResponse>()
+  const heartbeat = setInterval(() => {
+    for (const response of [...streams]) {
+      try {
+        response.write(`: heartbeat ${String(Date.now())}\n\n`)
+      } catch {
+        streams.delete(response)
+      }
+    }
+  }, 20_000)
+  heartbeat.unref()
   const publish = (): void => {
     const revision = library.snapshot().activationRevision
     for (const response of [...streams]) {
@@ -40,11 +50,19 @@ export function registerSkinHttp(server: SkinWebServer, library: SkinLibrary): (
         const status = error instanceof HttpError ? error.status : error instanceof TypeError ? 400 : 500
         const message = status === 500 ? 'Internal skin service error' : error instanceof Error ? error.message : String(error)
         if (status === 500) console.error('[dsh-skin-plugin]', error)
-        json(response, status, { ok: false, error: message })
+        json(response, status, {
+          ok: false,
+          error: message,
+          ...(error instanceof SkinArchiveError ? {
+            code: error.code,
+            ...(error.field === undefined ? {} : { field: error.field }),
+          } : {}),
+        })
       }
     },
   })
   return () => {
+    clearInterval(heartbeat)
     unsubscribe()
     unregister()
     for (const response of streams) response.end()
@@ -78,7 +96,7 @@ async function dispatch(
   }
   const skinMatch = new RegExp(`^${PREFIX}/skins/(${FINGERPRINT})$`).exec(pathname)
   if (method === 'GET' && skinMatch !== null) {
-    json(response, 200, { ok: true, value: { fingerprint: skinMatch[1], layer: library.layer(skinMatch[1] as string) } })
+    json(response, 200, { ok: true, value: library.draft(skinMatch[1] as string) })
     return
   }
   const assetMatch = new RegExp(`^${PREFIX}/assets/(${FINGERPRINT})/(${ASSET_NAME})$`).exec(pathname)

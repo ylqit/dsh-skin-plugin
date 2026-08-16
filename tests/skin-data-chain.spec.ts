@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { File as NodeFile } from 'node:buffer'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -12,12 +13,13 @@ import { registerSkinHttp, type SkinWebServer } from '../src/host/http.ts'
 import { SkinLibrary } from '../src/host/library.ts'
 import { SkinStudioController } from '../src/client/controller.ts'
 import type { ThemeService } from '../src/client/contracts.ts'
-import type { ThemeLayerDefinition } from '../src/shared/contracts.ts'
+import type { SkinHostState, ThemeLayerV2 } from '../src/shared/contracts.ts'
 
 const roots: string[] = []
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
 
 afterEach(async () => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   for (const style of document.querySelectorAll('style[data-dsh-skin]')) style.remove()
   delete document.body.dataset.dshSkinActive
@@ -46,7 +48,7 @@ function themeService(): ThemeService {
   }
 }
 
-function theme(name: string, asset = false): ThemeLayerDefinition {
+function theme(name: string, asset = false): ThemeLayerV2 {
   const offset = name.charCodeAt(0) % 10
   const backdrop = {
     light: {
@@ -74,20 +76,35 @@ function theme(name: string, asset = false): ThemeLayerDefinition {
   }
 }
 
-function archive(name: string, options: { asset?: boolean; layer?: unknown; assetHash?: string; extra?: Zippable } = {}): Uint8Array {
+function archive(name: string, options: {
+  asset?: boolean
+  layer?: unknown
+  assetHash?: string
+  extra?: Zippable
+  schemaVersion?: number
+  themePartsVersion?: number
+  themeSchemaVersion?: number
+  assetPurpose?: 'backdrop' | 'preview' | 'component'
+} = {}): Uint8Array {
   const withAsset = options.asset === true
   const files: Zippable = { ...(options.extra ?? {}) }
   const assets = withAsset
     ? [{
         path: 'assets/backdrop.png', mimeType: 'image/png',
         sha256: options.assetHash ?? createHash('sha256').update(PNG).digest('hex'), bytes: PNG.byteLength,
+        purpose: options.assetPurpose ?? 'backdrop',
       }]
     : []
   files['manifest.json'] = strToU8(JSON.stringify({
-    schemaVersion: 1, id: name.toLowerCase(), name, version: '1.0.0', themePartsVersion: 1,
+    schemaVersion: options.schemaVersion ?? 3,
+    id: name.toLowerCase(), name, version: '2.0.0', author: 'DSH Skin Test', tags: [],
+    themePartsVersion: options.themePartsVersion ?? 2,
     capabilities: ['tokens', 'backdrop', 'component-parts'], assets,
   }))
-  files['theme.json'] = strToU8(JSON.stringify({ schemaVersion: 1, ...(options.layer ?? theme(name, withAsset)) as object }))
+  files['theme.json'] = strToU8(JSON.stringify({
+    schemaVersion: options.themeSchemaVersion ?? 2,
+    ...(options.layer ?? theme(name, withAsset)) as object,
+  }))
   if (withAsset) files['assets/backdrop.png'] = PNG
   return zipSync(files, { level: 9 })
 }
@@ -106,13 +123,110 @@ function previewStyle(): HTMLStyleElement | null {
   return document.querySelector('style[data-dsh-skin="preview"]')
 }
 
+class TestEventSource {
+  static latest: TestEventSource | undefined
+  private readonly listeners = new Map<string, Set<() => void>>()
+
+  constructor(_url: string) {
+    TestEventSource.latest = this
+  }
+
+  addEventListener(name: string, listener: () => void): void {
+    const listeners = this.listeners.get(name) ?? new Set()
+    listeners.add(listener)
+    this.listeners.set(name, listeners)
+  }
+
+  emit(name: string): void {
+    for (const listener of this.listeners.get(name) ?? []) listener()
+  }
+
+  close(): void {}
+}
+
 describe('overlay skin data chain', () => {
+  it('accepts only schema v3 with Theme Parts v2', () => {
+    expect(parseSkinArchive(archive('Current')).manifest.schemaVersion).toBe(3)
+    expect(() => parseSkinArchive(archive('LegacyV1', {
+      schemaVersion: 1, themePartsVersion: 1, themeSchemaVersion: 1,
+    }))).toThrow(/schemaVersion.*3/)
+    expect(() => parseSkinArchive(archive('LegacyV2', {
+      schemaVersion: 2, themePartsVersion: 1, themeSchemaVersion: 1,
+    }))).toThrow(/schemaVersion.*3/)
+    expect(() => parseSkinArchive(archive('OldParts', { themePartsVersion: 1 }))).toThrow(/themePartsVersion.*2/)
+    expect(() => parseSkinArchive(archive('OldTheme', { themeSchemaVersion: 1 }))).toThrow(/theme\.json\.schemaVersion.*2/)
+  })
+
+  it.each([1, 2])('rejects schema v%s with zero persistence and zero state change', async (schemaVersion) => {
+    const store = await library()
+    const current = await store.library.import(archive('CurrentState'))
+    await store.library.commit(store.library.prepare(current.fingerprint).preparationId)
+    const beforeState = store.library.snapshot()
+    const beforeFiles = await readdir(store.root)
+    await expect(store.library.import(archive(`Rejected${String(schemaVersion)}`, {
+      schemaVersion, themePartsVersion: 1, themeSchemaVersion: 1,
+    }))).rejects.toMatchObject({ code: 'UNSUPPORTED_PROTOCOL' })
+    expect(store.library.snapshot()).toEqual(beforeState)
+    expect(await readdir(store.root)).toEqual(beforeFiles)
+  })
+
+  it('returns stable protocol and asset error codes', () => {
+    try {
+      parseSkinArchive(archive('Legacy', { schemaVersion: 2, themePartsVersion: 1, themeSchemaVersion: 1 }))
+      throw new Error('legacy archive unexpectedly parsed')
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'UNSUPPORTED_PROTOCOL', field: 'manifest.json.schemaVersion' })
+    }
+    try {
+      parseSkinArchive(archive('Forged', { asset: true, assetHash: '0'.repeat(64) }))
+      throw new Error('forged archive unexpectedly parsed')
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'INVALID_ASSET' })
+    }
+    try {
+      parseSkinArchive(archive('UnsafeEntry', { extra: { 'theme.css': strToU8('*{}') } }))
+      throw new Error('unsafe archive unexpectedly parsed')
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'SECURITY_LIMIT' })
+    }
+    try {
+      parseSkinArchive(archive('InvalidPart', { layer: { tokens: {}, partStyles: [{ part: 'unknown.part', style: { light: {}, dark: {} } }] } }))
+      throw new Error('invalid archive unexpectedly parsed')
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'INVALID_ARCHIVE' })
+    }
+  })
+
+  it('rewrites and compiles a declared component surface image', () => {
+    const parsed = parseSkinArchive(archive('SurfaceImage', {
+      asset: true,
+      assetPurpose: 'component',
+      layer: {
+        tokens: {},
+        partStyles: [{
+          part: 'conversation.message',
+          style: {
+            light: { surfaceImage: { assetUrl: 'asset:assets/backdrop.png', fit: 'cover', positionX: 0.25, positionY: 0.75 } },
+            dark: { surfaceImage: { assetUrl: 'asset:assets/backdrop.png', fit: 'contain', positionX: 0.5, positionY: 0.5 } },
+          },
+        }],
+      },
+    }))
+    const image = parsed.layer.partStyles?.[0]?.style.light.surfaceImage
+    expect(image?.assetUrl).toMatch(/^\/api\/dsh-skin\/assets\/[a-f0-9]{64}\/backdrop\.png$/)
+    expect(compileThemeLayerCss(parsed.layer)).toContain(`background-image:url("${image?.assetUrl}")`)
+    expect(compileThemeLayerCss(parsed.layer)).toContain('background-position:25% 75%')
+    expect(compileThemeLayerCss(parsed.layer)).toContain('background-size:cover')
+  })
+
   it('keeps Host and Client CSS identical through immutable import and Preview-to-Active commit', async () => {
     const store = await library()
     const first = await store.library.import(archive('Aurora', { asset: true }))
     const second = await store.library.import(archive('Nebula'))
     const firstCommit = await store.library.commit(store.library.prepare(first.fingerprint).preparationId)
     expect(firstCommit.activationRevision).toBe(1)
+    await expect(readFile(join(store.root, 'state-v3.json'), 'utf8')).resolves.toContain(first.fingerprint)
+    await expect(readFile(join(store.root, 'state.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
 
     vi.stubGlobal('EventSource', undefined)
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -166,13 +280,36 @@ describe('overlay skin data chain', () => {
     expect(warnings).toHaveLength(1)
   })
 
-  it('loads v2 built-ins and switches overlay presentation without dynamic module loads', async () => {
+  it('loads v3 built-ins and exposes their component experiences', async () => {
     const builtinsRoot = join(process.cwd(), 'builtins')
     const parsed = await Promise.all([
       'pikachu-energy.dshskin', 'squirtle-water.dshskin', 'bulbasaur-growth.dshskin',
     ].map(async name => parseSkinArchive(new Uint8Array(await readFile(join(builtinsRoot, name))))))
-    expect(parsed.map(skin => skin.manifest.schemaVersion)).toEqual([2, 2, 2])
+    expect(parsed.map(skin => skin.manifest.schemaVersion)).toEqual([3, 3, 3])
+    expect(parsed.map(skin => skin.manifest.version)).toEqual(['2.0.0', '2.0.0', '2.0.0'])
     expect(parsed.every(skin => skin.preview !== undefined && skin.experience !== undefined)).toBe(true)
+    expect(parsed[0]?.experience?.placements).toEqual(['skin.shell.top', 'skin.shell.floating'])
+    expect(parsed[1]?.experience?.placements).toEqual(['skin.shell.bottom', 'skin.shell.floating'])
+    expect(parsed[2]?.experience?.placements).toEqual(['skin.sidebar.brand', 'skin.conversation.hero'])
+    expect(parsed[0]?.layer.partStyles?.map(rule => [rule.part, rule.variant, rule.state])).toEqual(expect.arrayContaining([
+      ['conversation.composer', undefined, undefined],
+      ['conversation.message', 'user', undefined],
+      ['primitive.dialog-surface', undefined, undefined],
+    ]))
+    expect(parsed[1]?.layer.partStyles?.map(rule => [rule.part, rule.variant, rule.state])).toEqual(expect.arrayContaining([
+      ['primitive.input-control', undefined, undefined],
+      ['conversation.message', 'assistant', undefined],
+      ['tool.card', 'default', 'running'],
+    ]))
+    expect(parsed[2]?.layer.partStyles?.map(rule => [rule.part, rule.variant, rule.state])).toEqual(expect.arrayContaining([
+      ['shell.sidebar', undefined, undefined],
+      ['conversation.composer', undefined, undefined],
+      ['settings.row', undefined, 'selected'],
+    ]))
+    for (const skin of parsed) {
+      expect(skin.layer.backdrop?.light.assetUrl).not.toBe(skin.layer.backdrop?.dark.assetUrl)
+      expect(Object.values(skin.layer.tokens).some(pair => pair?.light !== pair?.dark)).toBe(true)
+    }
 
     const store = await library(builtinsRoot)
     const skins = store.library.snapshot().skins
@@ -182,9 +319,13 @@ describe('overlay skin data chain', () => {
 
     const first = skins.find(skin => skin.id === 'pikachu-energy')!
     const second = skins.find(skin => skin.id === 'squirtle-water')!
+    expect(store.library.draft(first.fingerprint)).toMatchObject({
+      fingerprint: first.fingerprint,
+      source: 'builtin',
+      manifest: { schemaVersion: 3, id: 'pikachu-energy', version: '2.0.0' },
+      experience: first.experience,
+    })
     await store.library.commit(store.library.prepare(first.fingerprint).preparationId)
-    // Experience descriptors stay stored for future contract-capable harnesses,
-    // but overlay mode never fetches or executes them.
     expect(store.library.snapshot().activeExperience?.moduleId).toBe(first.experience?.moduleId)
 
     vi.stubGlobal('EventSource', undefined)
@@ -203,14 +344,101 @@ describe('overlay skin data chain', () => {
       throw new Error(`unexpected test request ${path}`)
     }))
 
-    const controller = new SkinStudioController(themeService(), true)
+    const experience = {
+      install: vi.fn(async () => {}),
+      clear: vi.fn(),
+      setMode: vi.fn(),
+    }
+    const controller = new SkinStudioController(themeService(), true, experience)
     const dispose = controller.start()
     await vi.waitFor(() => { expect(activeStyle()?.getAttribute('data-dsh-skin-fingerprint')).toBe(first.fingerprint) })
+    expect(experience.install).toHaveBeenCalledWith(first.experience, first.fingerprint)
     controller.activate(second.fingerprint)
     await vi.waitFor(() => { expect(activeStyle()?.getAttribute('data-dsh-skin-fingerprint')).toBe(second.fingerprint) })
+    expect(experience.install).toHaveBeenCalledWith(second.experience, second.fingerprint)
     expect(store.library.snapshot().activationRevision).toBe(2)
     dispose()
+    expect(experience.clear).toHaveBeenCalled()
     expect(activeStyle()).toBeNull()
+  })
+
+  it('edits a built-in as a lossless local v3 copy with assets and Experience intact', async () => {
+    const store = await library(join(process.cwd(), 'builtins'))
+    const builtin = store.library.snapshot().skins.find(skin => skin.id === 'pikachu-energy')!
+    const original = store.library.draft(builtin.fingerprint)
+    let uploaded: Uint8Array | undefined
+    installInstantImages()
+    vi.stubGlobal('EventSource', undefined)
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith(`/skins/${builtin.fingerprint}`)) return envelope(original)
+      if (path.includes(`/assets/${builtin.fingerprint}/`)) {
+        const filename = path.slice(path.lastIndexOf('/') + 1)
+        const asset = store.library.asset(builtin.fingerprint, filename)
+        return new Response(asset.bytes, { headers: { 'Content-Type': asset.mimeType } })
+      }
+      if (path === original.experience?.url) {
+        const experience = store.library.experience(builtin.fingerprint)
+        return new Response(experience.bytes, { headers: { 'Content-Type': 'text/javascript' } })
+      }
+      if (path.endsWith('/import')) {
+        uploaded = init?.body as Uint8Array
+        return envelope(await store.library.import(uploaded), 201)
+      }
+      if (path.endsWith('/state')) return envelope(store.library.snapshot())
+      throw new Error(`unexpected test request ${path}`)
+    }))
+
+    const controller = new SkinStudioController(themeService(), true)
+    controller.beginDraft(builtin.fingerprint)
+    await vi.waitFor(() => { expect(controller.getSnapshot().draftName).toContain('副本') })
+    controller.updateToken('--dsw-alias-brand-primary', 'light', '#ffd400')
+    controller.saveDraft()
+    await vi.waitFor(() => { expect(uploaded).toBeInstanceOf(Uint8Array) })
+
+    const copy = parseSkinArchive(uploaded!)
+    expect(copy.manifest).toMatchObject({
+      schemaVersion: 3,
+      id: 'pikachu-energy-custom',
+      name: expect.stringContaining('副本'),
+      version: '2.0.0',
+      author: original.manifest.author,
+      description: original.manifest.description,
+      tags: original.manifest.tags,
+      experience: {
+        moduleId: original.manifest.experience?.moduleId,
+        placements: original.manifest.experience?.placements,
+      },
+    })
+    expect(copy.manifest.assets).toHaveLength(original.manifest.assets.length)
+    expect(copy.experience).toBeDefined()
+    expect(store.library.snapshot().skins.some(skin => skin.source === 'local' && skin.fingerprint === copy.fingerprint)).toBe(true)
+  })
+
+  it('keeps component assets when backdrop images are replaced in Studio', async () => {
+    let uploaded: Uint8Array | undefined
+    installInstantImages()
+    vi.stubGlobal('EventSource', undefined)
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/import')) { uploaded = init?.body as Uint8Array; return envelope({ imported: true }, 201) }
+      if (path.endsWith('/state')) return envelope({ activationRevision: 0, skins: [] } satisfies SkinHostState)
+      throw new Error(`unexpected test request ${path}`)
+    }))
+    const image = (name: string): File => new NodeFile([PNG], name, { type: 'image/png' }) as unknown as File
+    const controller = new SkinStudioController(themeService(), true)
+    controller.updatePartSurfaceImage('conversation.message', '', '', 'light', image('surface.png'))
+    await vi.waitFor(() => { expect(controller.getSnapshot().busy).toBe(false) })
+    expect(controller.getSnapshot().error).toBeUndefined()
+    expect(controller.getSnapshot().draft.partStyles?.find(rule => rule.part === 'conversation.message' && rule.variant === undefined)?.style.light.surfaceImage).toBeDefined()
+    controller.updateBackdropImage('light', image('light.png'))
+    controller.updateBackdropImage('dark', image('dark.png'))
+    await vi.waitFor(() => { expect(controller.getSnapshot().busy).toBe(false) })
+    controller.saveDraft()
+    await vi.waitFor(() => { expect(uploaded).toBeInstanceOf(Uint8Array) })
+    const parsed = parseSkinArchive(uploaded!)
+    expect(parsed.manifest.assets.some(asset => asset.purpose === 'component')).toBe(true)
+    expect(parsed.manifest.assets.filter(asset => asset.purpose === 'backdrop')).toHaveLength(2)
   })
 
   it.each([
@@ -251,6 +479,71 @@ describe('overlay skin data chain', () => {
     expect(JSON.parse(body)).toMatchObject({ ok: false, error: expect.stringContaining('Host machine') })
   })
 
+  it('returns stable import errors through the Host API', async () => {
+    const store = await library()
+    let handler: Parameters<SkinWebServer['register']>[0]['handler'] | undefined
+    registerSkinHttp({
+      register: route => { handler = route.handler; return () => {} },
+      tapIndex: () => () => {},
+    }, store.library)
+    const bytes = archive('LegacyApi', { schemaVersion: 2, themePartsVersion: 1, themeSchemaVersion: 1 })
+    const request = Readable.from([Buffer.from(bytes)])
+    Object.assign(request, {
+      method: 'POST',
+      url: '/api/dsh-skin/import',
+      headers: { 'content-length': String(bytes.byteLength), host: '127.0.0.1' },
+    })
+    Object.defineProperty(request, 'socket', { value: { remoteAddress: '127.0.0.1' } })
+    let status = 0
+    let body = ''
+    const response = {
+      headersSent: false,
+      writeHead(code: number) { status = code; this.headersSent = true; return this },
+      end(chunk?: Uint8Array) { if (chunk !== undefined) body += Buffer.from(chunk).toString('utf8') },
+      write() { return true },
+    }
+    if (handler === undefined) throw new Error('skin handler was not registered')
+
+    await handler(request as never, response as never)
+
+    expect(status).toBe(400)
+    expect(JSON.parse(body)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('schemaVersion'),
+      code: 'UNSUPPORTED_PROTOCOL',
+      field: 'manifest.json.schemaVersion',
+    })
+  })
+
+  it('keeps SSE connections alive and stops heartbeats on Host unload', async () => {
+    vi.useFakeTimers()
+    const store = await library()
+    let handler: Parameters<SkinWebServer['register']>[0]['handler'] | undefined
+    const writes: string[] = []
+    const dispose = registerSkinHttp({
+      register: route => { handler = route.handler; return () => {} },
+      tapIndex: () => () => {},
+    }, store.library)
+    const request = {
+      method: 'GET', url: '/api/dsh-skin/events', headers: {},
+      once: vi.fn(),
+    }
+    const response = {
+      headersSent: false,
+      writeHead() { this.headersSent = true; return this },
+      write(value: string) { writes.push(value); return true },
+      end: vi.fn(),
+    }
+    if (handler === undefined) throw new Error('skin handler was not registered')
+    await handler(request as never, response as never)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(writes.some(value => value.startsWith(': heartbeat'))).toBe(true)
+    dispose()
+    const count = writes.length
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(writes).toHaveLength(count)
+  })
+
   it('surfaces local-management denial in controller state without issuing a request', async () => {
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
@@ -258,5 +551,137 @@ describe('overlay skin data chain', () => {
     controller.restoreDefault()
     await vi.waitFor(() => { expect(controller.getSnapshot().error).toContain('Host 本机') })
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('restores one Part or property without hiding the DSH component and supports undo/redo', () => {
+    const controller = new SkinStudioController(themeService(), true)
+    controller.upsertPartRule('primitive.button', 'primary', '', 'opacity', '0.7', '0.8')
+    expect(controller.getSnapshot()).toMatchObject({ dirty: true, canUndo: true })
+    expect(controller.getSnapshot().draft.partStyles?.find(rule => rule.part === 'primitive.button')?.style.light.opacity).toBe(0.7)
+
+    controller.resetPartProperty('primitive.button', 'primary', '', 'opacity')
+    expect(controller.getSnapshot().draft.partStyles?.find(rule => rule.part === 'primitive.button')?.style.light.opacity).toBeUndefined()
+    controller.undo()
+    expect(controller.getSnapshot().draft.partStyles?.find(rule => rule.part === 'primitive.button')?.style.light.opacity).toBe(0.7)
+    controller.redo()
+    expect(controller.getSnapshot().draft.partStyles?.find(rule => rule.part === 'primitive.button')?.style.light.opacity).toBeUndefined()
+
+    controller.setPartEnabled('primitive.button', false)
+    expect(controller.getSnapshot().draft.partStyles?.some(rule => rule.part === 'primitive.button')).toBe(false)
+    expect(controller.getSnapshot().draft.partStyles?.some(rule => rule.part === 'conversation.composer')).toBe(true)
+    expect(previewStyle()?.textContent ?? '').not.toContain('display:none')
+    controller.setPartEnabled('primitive.button', true)
+    expect(controller.getSnapshot().draft.partStyles?.some(rule => rule.part === 'primitive.button')).toBe(true)
+  })
+
+  it('refreshes state when a new SSE connection sends its ready event', async () => {
+    const host: SkinHostState = { activationRevision: 0, skins: [] }
+    vi.stubGlobal('EventSource', TestEventSource)
+    vi.stubGlobal('fetch', vi.fn(async () => envelope({ ...host })))
+    const controller = new SkinStudioController(themeService(), true)
+    const dispose = controller.start()
+
+    await vi.waitFor(() => { expect(controller.getSnapshot().host?.activationRevision).toBe(0) })
+    host.activationRevision = 4
+    TestEventSource.latest?.emit('ready')
+    await vi.waitFor(() => { expect(controller.getSnapshot().host?.activationRevision).toBe(4) })
+    dispose()
+  })
+
+  it('does not let a slow image from an older refresh replace a newer skin', async () => {
+    const slow = theme('Slow', true)
+    const fast = theme('Fast', true)
+    slow.backdrop!.light.assetUrl = `/api/dsh-skin/assets/${'a'.repeat(64)}/slow.png`
+    slow.backdrop!.dark.assetUrl = `/api/dsh-skin/assets/${'a'.repeat(64)}/slow.png`
+    fast.backdrop!.light.assetUrl = `/api/dsh-skin/assets/${'b'.repeat(64)}/fast.png`
+    fast.backdrop!.dark.assetUrl = `/api/dsh-skin/assets/${'b'.repeat(64)}/fast.png`
+    const states: SkinHostState[] = [
+      { activationRevision: 1, activeFingerprint: 'a'.repeat(64), activeLayer: slow, skins: [] },
+      { activationRevision: 2, activeFingerprint: 'b'.repeat(64), activeLayer: fast, skins: [] },
+    ]
+    let stateRequest = 0
+    let finishSlow: (() => void) | undefined
+    class DeferredImage {
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      set src(value: string) {
+        if (value.includes('slow')) finishSlow = () => { this.onload?.() }
+        else queueMicrotask(() => { this.onload?.() })
+      }
+    }
+    vi.stubGlobal('Image', DeferredImage)
+    vi.stubGlobal('EventSource', TestEventSource)
+    vi.stubGlobal('fetch', vi.fn(async () => envelope(states[Math.min(stateRequest++, states.length - 1)])))
+    const controller = new SkinStudioController(themeService(), true)
+    const dispose = controller.start()
+
+    await vi.waitFor(() => { expect(controller.getSnapshot().host?.activationRevision).toBe(1) })
+    TestEventSource.latest?.emit('ready')
+    await vi.waitFor(() => {
+      expect(activeStyle()?.getAttribute('data-dsh-skin-fingerprint')).toBe('b'.repeat(64))
+    })
+    finishSlow?.()
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+    expect(activeStyle()?.getAttribute('data-dsh-skin-fingerprint')).toBe('b'.repeat(64))
+    dispose()
+  })
+
+  it('preloads controlled component surface images before presenting a skin', async () => {
+    const layer = theme('SurfacePreload')
+    layer.partStyles = [{
+      part: 'conversation.message',
+      style: {
+        light: { surfaceImage: { assetUrl: `/api/dsh-skin/assets/${'c'.repeat(64)}/surface.png`, fit: 'cover', positionX: 0.5, positionY: 0.5 } },
+        dark: { surfaceImage: { assetUrl: `/api/dsh-skin/assets/${'c'.repeat(64)}/surface.png`, fit: 'cover', positionX: 0.5, positionY: 0.5 } },
+      },
+    }]
+    let finish: (() => void) | undefined
+    class DeferredImage {
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      set src(_value: string) { finish = () => { this.onload?.() } }
+    }
+    vi.stubGlobal('Image', DeferredImage)
+    vi.stubGlobal('EventSource', undefined)
+    vi.stubGlobal('fetch', vi.fn(async () => envelope({
+      activationRevision: 1, activeFingerprint: 'c'.repeat(64), activeLayer: layer, skins: [],
+    } satisfies SkinHostState)))
+    const controller = new SkinStudioController(themeService(), true)
+    const dispose = controller.start()
+    await vi.waitFor(() => { expect(controller.getSnapshot().host?.activationRevision).toBe(1) })
+    expect(activeStyle()).toBeNull()
+    finish?.()
+    await vi.waitFor(() => { expect(activeStyle()).not.toBeNull() })
+    dispose()
+  })
+
+  it('cancels preparation and restores the previous presentation when Experience activation fails', async () => {
+    const fingerprint = 'f'.repeat(64)
+    const experience = {
+      install: vi.fn(async () => { throw new Error('broken experience') }),
+      clear: vi.fn(),
+      setMode: vi.fn(),
+    }
+    const cancel = vi.fn()
+    vi.stubGlobal('EventSource', undefined)
+    installInstantImages()
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const path = String(input)
+      if (path.endsWith('/prepare')) return envelope({
+        preparationId: 'prepared', fingerprint, activationRevision: 0, layer: theme('Prepared'),
+        experience: {
+          apiVersion: 1, moduleId: 'dsh-skin:00000000-0000-4000-8000-000000000000',
+          url: `/api/dsh-skin/experience/${fingerprint}/client.js`, rev: fingerprint,
+          placements: ['skin.shell.floating'], assets: {},
+        },
+      })
+      if (path.endsWith('/cancel')) { cancel(); return envelope({ cancelled: true }) }
+      throw new Error(`unexpected test request ${path}`)
+    }))
+    const controller = new SkinStudioController(themeService(), true, experience)
+    controller.activate(fingerprint)
+    await vi.waitFor(() => { expect(controller.getSnapshot().error).toContain('broken experience') })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(previewStyle()).toBeNull()
   })
 })

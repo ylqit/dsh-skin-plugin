@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "tokens": {
     "--dsw-alias-bg-base": { "light": "#eff9e9", "dark": "#0b1d15" },
     "--dsw-alias-bg-layer-1": { "light": "#fbfff8", "dark": "#132a1e" },

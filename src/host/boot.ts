@@ -5,14 +5,14 @@
  * official `body[data-ds-dark-theme]` signal, so light/dark needs no script.
  */
 
-import type { ThemeLayerDefinition } from '../shared/contracts.ts'
+import type { ThemeLayerV2 } from '../shared/contracts.ts'
 import { compileThemeLayerCss } from '../shared/theme-layer.ts'
 
 /** Synchronous active-skin source read from the Host library. */
 export interface SkinBootSource {
   activationRevision: number
   contentFingerprint: string
-  layer: ThemeLayerDefinition
+  layer: ThemeLayerV2
 }
 
 const STYLE_ID = 'dsh-theme-presentation'

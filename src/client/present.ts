@@ -5,12 +5,13 @@
  * never scripts light/dark itself — disposing the node fully retracts the lane.
  */
 
-import type { ThemeLayerDefinition } from '../shared/contracts.ts'
+import type { ThemeLayerV2 } from '../shared/contracts.ts'
 import { compileThemeLayerCss } from '../shared/theme-layer.ts'
 
 /** One live presentation lane; `dispose` removes every DOM trace. */
 export interface OverlayPresentation {
   fingerprint: string | undefined
+  setEnabled(enabled: boolean): void
   dispose(): void
 }
 
@@ -27,7 +28,7 @@ const HOST_STYLE_ID = 'dsh-theme-presentation'
  */
 export function presentSkinLayer(options: {
   kind: 'active' | 'preview'
-  layer: ThemeLayerDefinition
+  layer: ThemeLayerV2
   fingerprint?: string
   activationRevision?: number
 }): OverlayPresentation {
@@ -40,15 +41,31 @@ export function presentSkinLayer(options: {
   if (options.kind === 'active') document.getElementById(HOST_STYLE_ID)?.remove()
   document.head.appendChild(style)
   const bookkeep = options.kind === 'active' ? document.body : undefined
-  if (bookkeep !== undefined && options.fingerprint !== undefined) bookkeep.dataset.dshSkinActive = options.fingerprint
+  const revision = options.activationRevision === undefined ? undefined : String(options.activationRevision)
+  if (bookkeep !== undefined && options.fingerprint !== undefined) {
+    bookkeep.dataset.dshSkinActive = options.fingerprint
+    if (revision === undefined) delete bookkeep.dataset.dshSkinRevision
+    else bookkeep.dataset.dshSkinRevision = revision
+  }
   let disposed = false
   return {
     fingerprint: options.fingerprint,
+    setEnabled(enabled: boolean): void {
+      if (!disposed) style.disabled = !enabled
+    },
     dispose(): void {
       if (disposed) return
       disposed = true
       style.remove()
-      if (bookkeep !== undefined) delete bookkeep.dataset.dshSkinActive
+      if (
+        bookkeep !== undefined
+        && options.fingerprint !== undefined
+        && bookkeep.dataset.dshSkinActive === options.fingerprint
+        && bookkeep.dataset.dshSkinRevision === revision
+      ) {
+        delete bookkeep.dataset.dshSkinActive
+        delete bookkeep.dataset.dshSkinRevision
+      }
     },
   }
 }
@@ -62,7 +79,7 @@ export function presentSkinLayer(options: {
  * is unlayered, so only inline styles can win over it).
  * @param layer - committed active layer, undefined for the harness default.
  */
-export function syncBackdropFlag(layer: ThemeLayerDefinition | undefined): void {
+export function syncBackdropFlag(layer: ThemeLayerV2 | undefined): void {
   if (layer?.backdrop !== undefined) document.body.dataset.dshSkinBackdrop = '1'
   else delete document.body.dataset.dshSkinBackdrop
 }

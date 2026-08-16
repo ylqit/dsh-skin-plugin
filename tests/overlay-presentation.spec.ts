@@ -1,17 +1,17 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { createSkinBootInjector } from '../src/host/boot.ts'
 import { presentSkinLayer, syncBackdropFlag } from '../src/client/present.ts'
-import type { ThemeLayerDefinition } from '../src/shared/contracts.ts'
+import type { ThemeLayerV2 } from '../src/shared/contracts.ts'
 import { compileThemeLayerCss } from '../src/shared/theme-layer.ts'
 
-function layer(color: string): ThemeLayerDefinition {
+function layer(color: string): ThemeLayerV2 {
   return {
     tokens: { '--dsw-alias-bg-base': { light: color, dark: '#0b1020' } },
   }
 }
 
-function layerWithBackdrop(color: string): ThemeLayerDefinition {
+function layerWithBackdrop(color: string): ThemeLayerV2 {
   return {
     ...layer(color),
     backdrop: {
@@ -25,7 +25,43 @@ function activeStyle(): HTMLStyleElement | null {
   return document.querySelector('style[data-dsh-skin="active"]')
 }
 
+afterEach(() => {
+  for (const style of document.querySelectorAll('style[data-dsh-skin], #dsh-theme-presentation')) style.remove()
+  delete document.body.dataset.dshSkinActive
+  delete document.body.dataset.dshSkinRevision
+  delete document.body.dataset.dshSkinBackdrop
+})
+
 describe('overlay presentation', () => {
+  it('keeps component rules in the unlayered cascade plane', () => {
+    const css = compileThemeLayerCss({
+      tokens: {},
+      partStyles: [{
+        part: 'primitive.button',
+        style: { light: { background: '#ffffff' }, dark: { background: '#000000' } },
+      }],
+    })
+    expect(css).not.toContain('@layer dsh-active-theme')
+    expect(css).toContain('[data-dsh-theme-part="primitive.button"]')
+  })
+
+  it('does not let an outgoing active lane clear incoming bookkeeping', () => {
+    const outgoing = presentSkinLayer({
+      kind: 'active', layer: layer('#ffffff'), fingerprint: 'a'.repeat(64), activationRevision: 3,
+    })
+    const incoming = presentSkinLayer({
+      kind: 'active', layer: layer('#f4f7fb'), fingerprint: 'b'.repeat(64), activationRevision: 4,
+    })
+
+    outgoing.dispose()
+
+    expect(document.body.dataset.dshSkinActive).toBe('b'.repeat(64))
+    expect(document.body.dataset.dshSkinRevision).toBe('4')
+    incoming.dispose()
+    expect(document.body.dataset.dshSkinActive).toBeUndefined()
+    expect(document.body.dataset.dshSkinRevision).toBeUndefined()
+  })
+
   it('applies one style node per lane and fully retracts on dispose', () => {
     const active = presentSkinLayer({ kind: 'active', layer: layer('#f4f7fb'), fingerprint: 'a'.repeat(64), activationRevision: 3 })
     const preview = presentSkinLayer({ kind: 'preview', layer: layer('#dfe9ff'), fingerprint: 'b'.repeat(64) })
@@ -49,6 +85,15 @@ describe('overlay presentation', () => {
     active.dispose() // idempotent
     expect(activeStyle()).toBeNull()
     expect(document.body.dataset.dshSkinActive).toBeUndefined()
+  })
+
+  it('can suspend the complete active lane while a full-page preview is live', () => {
+    const active = presentSkinLayer({ kind: 'active', layer: layer('#f4f7fb'), fingerprint: 'a'.repeat(64) })
+    active.setEnabled(false)
+    expect(activeStyle()?.disabled).toBe(true)
+    active.setEnabled(true)
+    expect(activeStyle()?.disabled).toBe(false)
+    active.dispose()
   })
 
   it('syncBackdropFlag follows the committed layer regardless of lane dispose order', () => {

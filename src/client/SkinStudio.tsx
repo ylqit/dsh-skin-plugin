@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Button, Input, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SkinStudioInjected, StudioSnapshot } from './contracts.ts'
-import type { ThemeColorValue, ThemeLayerDefinition, ThemePartStyle } from '../shared/contracts.ts'
+import type { ThemeColorValue, ThemeLayerV2, ThemePartStyle } from '../shared/contracts.ts'
 import css from './SkinStudio.module.css'
 
 type SkinStudioProps = Omit<SkinStudioInjected, 'hooks'> & {
@@ -21,6 +21,7 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
   const importRef = useRef<HTMLInputElement>(null)
   const [galleryMode, setGalleryMode] = useState<'light' | 'dark'>('light')
   const [part, setPart] = useState<string>(state.parts[0]?.id ?? 'primitive.button')
+  const [partSearch, setPartSearch] = useState('')
   const partInfo = state.parts.find(value => value.id === part)
   const [variant, setVariant] = useState('')
   const [partState, setPartState] = useState('')
@@ -37,6 +38,16 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
     light: { fallbackColor: '#f5f7fb', focusX: 0.5, focusY: 0.5, dim: 0.12, blurPx: 0 },
     dark: { fallbackColor: '#0b1020', focusX: 0.5, focusY: 0.5, dim: 0.28, blurPx: 0 },
   }
+  const filteredParts = useMemo(() => state.parts.filter(value => value.id.toLowerCase().includes(partSearch.trim().toLowerCase())), [partSearch, state.parts])
+  const partEnabled = state.draft.partStyles?.some(rule => rule.part === part) === true
+  const partAvailable = typeof document !== 'undefined' && document.querySelector(`[data-dsh-theme-part="${part}"]`) !== null
+
+  useEffect(() => {
+    if (!state.dirty) return
+    const warn = (event: BeforeUnloadEvent): void => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => { window.removeEventListener('beforeunload', warn) }
+  }, [state.dirty])
 
   useEffect(() => {
     if (partInfo?.variants.some(value => value === variant) !== true) setVariant('')
@@ -55,6 +66,9 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
   const manageDisabled = !state.localManagement || state.busy
   return (
     <section className={css.studio} data-dsh-theme-part="settings.panel">
+      {state.previewing && (
+        <button type="button" style={EMERGENCY_EXIT_STYLE} onClick={props.cancelPreview}>退出全页试穿</button>
+      )}
       <header className={css.hero}>
         <div>
           <span className={css.eyebrow}>DSH COMPONENT SKINS</span>
@@ -122,6 +136,12 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
                               {skin.experience !== undefined && (
                                 <p className={css.placements}>组件位置：{skin.experience.placements.join('、')}</p>
                               )}
+                              {skin.parts.length > 0 && (
+                                <p className={css.placements}>Part：{skin.parts.map(value => {
+                                  const available = typeof document !== 'undefined' && document.querySelector(`[data-dsh-theme-part="${value}"]`) !== null
+                                  return `${value}${available ? '' : '（当前页未生效）'}`
+                                }).join('、')}</p>
+                              )}
                               <code>{skin.fingerprint.slice(0, 12)}</code>
                               <div className={css.cardActions}>
                                 <Button variant="ghost" size="sm" disabled={!state.localManagement || state.busy} onClick={() => { props.beginDraft(skin.fingerprint) }}>编辑与试穿</Button>
@@ -152,6 +172,11 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
             <Button variant="outline" size="sm" onClick={() => { props.setColorScheme('light') }}>切到 Light</Button>
             <Button variant="outline" size="sm" onClick={() => { props.setColorScheme('dark') }}>切到 Dark</Button>
             {state.previewing && <Button variant="ghost" size="sm" onClick={props.cancelPreview}>取消试穿</Button>}
+          </div>
+          <div className={css.modeActions}>
+            <Button variant="ghost" size="sm" disabled={!state.canUndo} onClick={props.undo}>撤销</Button>
+            <Button variant="ghost" size="sm" disabled={!state.canRedo} onClick={props.redo}>重做</Button>
+            <span className={css.dirtyState}>{state.dirty ? `未保存：${state.changes.join('、')}` : '已保存'}</span>
           </div>
           <div className={css.saveActions}>
             <Button variant="primary" disabled={manageDisabled} onClick={props.saveDraft}>保存到 Host</Button>
@@ -207,6 +232,21 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
 
         <section className={css.editorPanel}>
           <h3>组件 Part 外观</h3>
+          <label className={css.fieldLabel}>搜索组件
+            <Input value={partSearch} disabled={!state.localManagement} placeholder="消息、输入区、菜单…" onChange={event => { setPartSearch(event.currentTarget.value) }} />
+          </label>
+          <div className={css.partCatalog}>
+            {filteredParts.map(value => {
+              const styled = state.draft.partStyles?.some(rule => rule.part === value.id) === true
+              const available = typeof document !== 'undefined' && document.querySelector(`[data-dsh-theme-part="${value.id}"]`) !== null
+              return (
+                <button key={value.id} type="button" data-selected={part === value.id || undefined} onClick={() => { setPart(value.id) }}>
+                  <span>{value.id}</span><small>{styled ? '已换肤' : 'DSH 默认'} · {available ? '当前页可见' : '当前页未识别'}</small>
+                </button>
+              )
+            })}
+          </div>
+          <p className={css.partStatus}>所选组件：{partEnabled ? '已启用换肤' : '使用 DSH 默认'}；{partAvailable ? '当前页面已识别锚点' : '当前页面暂无锚点，规则仍可保存并在对应页面生效'}</p>
           <div className={css.threeColumns}>
             <label className={css.fieldLabel}>Part
               <select value={part} disabled={!state.localManagement} onChange={event => { setPart(event.currentTarget.value) }}>
@@ -232,11 +272,30 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
             </select>
           </label>
           <ModeFields disabled={!state.localManagement} light={lightValue} dark={darkValue} onLight={setLightValue} onDark={setDarkValue} />
-          <Button
-            variant="primary"
-            disabled={manageDisabled}
-            onClick={() => { props.upsertPartRule(part, variant, partState, field, lightValue, darkValue) }}
-          >应用完整规则</Button>
+          <div className={css.modeActions}>
+            <Button variant="primary" disabled={manageDisabled} onClick={() => { props.upsertPartRule(part, variant, partState, field, lightValue, darkValue) }}>应用完整规则</Button>
+            <Button variant="outline" disabled={manageDisabled} onClick={() => { props.resetPartProperty(part, variant, partState, field) }}>重置当前属性</Button>
+            <Button variant="ghost" disabled={manageDisabled} onClick={() => { props.setPartEnabled(part, !partEnabled) }}>{partEnabled ? '恢复 DSH 默认' : '启用组件换肤'}</Button>
+          </div>
+          <div className={css.modeFields}>
+            {(['light', 'dark'] as const).map(mode => (
+              <label key={mode} className={css.fieldLabel}>{mode === 'light' ? 'Light' : 'Dark'} 组件背景素材
+                <input type="file" accept="image/png,image/jpeg,image/webp" disabled={!state.localManagement || partInfo?.properties.includes('surfaceImage') !== true} onChange={(event) => {
+                  const file = event.currentTarget.files?.[0]
+                  if (file !== undefined) props.updatePartSurfaceImage(part, variant, partState, mode, file)
+                  event.currentTarget.value = ''
+                }} />
+              </label>
+            ))}
+          </div>
+          <div className={css.componentPreviewGrid}>
+            {(['light', 'dark'] as const).map(mode => (
+              <div key={mode} data-dsh-theme-preview-mode={mode}>
+                <span>{mode === 'light' ? 'Light' : 'Dark'} 局部预览</span>
+                <div data-dsh-theme-part={part} data-dsh-theme-variant={variant || undefined} data-dsh-theme-state={partState || undefined}>Selected component</div>
+              </div>
+            ))}
+          </div>
         </section>
       </div>
 
@@ -275,6 +334,13 @@ export function SkinStudio(props: SkinStudioProps): ReactNode {
   )
 }
 
+const EMERGENCY_EXIT_STYLE: CSSProperties = {
+  position: 'fixed', top: 12, right: 12, zIndex: 2147483647,
+  minHeight: 40, padding: '0 16px', border: '2px solid #ffffff', borderRadius: 999,
+  color: '#ffffff', background: '#b42318', boxShadow: '0 6px 24px #00000055',
+  font: '600 14px/1 system-ui, sans-serif', cursor: 'pointer', pointerEvents: 'auto',
+}
+
 function ModeFields({ disabled, light, dark, onLight, onDark }: {
   disabled: boolean
   light: string
@@ -308,7 +374,7 @@ function BackdropFields({ mode, values, disabled, update }: {
   )
 }
 
-function ModePreview({ title, mode, layer }: { title: string; mode: 'light' | 'dark'; layer: ThemeLayerDefinition }): ReactNode {
+function ModePreview({ title, mode, layer }: { title: string; mode: 'light' | 'dark'; layer: ThemeLayerV2 }): ReactNode {
   const variables: CSSProperties & Record<string, string> = {}
   for (const [name, value] of Object.entries(layer.tokens)) {
     if (value !== undefined) variables[name] = value[mode]

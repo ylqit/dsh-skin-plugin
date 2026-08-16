@@ -194,6 +194,66 @@
   font-size: 10px;
 }
 
+.dirtyState,
+.partStatus {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.partStatus { margin: 0; line-height: 1.5; }
+
+.partCatalog {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 190px;
+  overflow: auto;
+}
+
+.partCatalog button {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  padding: 8px 10px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.partCatalog button[data-selected] {
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-brand-primary);
+}
+
+.partCatalog span,
+.partCatalog small { overflow: hidden; max-width: 100%; text-overflow: ellipsis; white-space: nowrap; }
+.partCatalog small { color: var(--dsw-alias-label-tertiary); font-size: 9px; }
+
+.componentPreviewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.componentPreviewGrid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 80px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.componentPreviewGrid span { color: var(--dsw-alias-label-tertiary); font-size: 10px; }
+.componentPreviewGrid [data-dsh-theme-part] { padding: 10px; }
+
 .empty {
   padding: 22px;
   color: var(--dsw-alias-label-secondary);
@@ -321,7 +381,9 @@
   }
 
   .threeColumns,
-  .backdropFields {
+  .backdropFields,
+  .partCatalog,
+  .componentPreviewGrid {
     grid-template-columns: 1fr;
   }
 }

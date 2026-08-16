@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { startPartStamper } from '../src/client/part-stamper.ts'
 
 const PART = 'data-dsh-theme-part'
@@ -82,6 +82,86 @@ describe('part anchor shim', () => {
     expect(late.getAttribute(PART)).toBe('primitive.button')
   })
 
+  it('stamps an added control without rescanning every control in the document', async () => {
+    buildShellFixture()
+    dispose = startPartStamper()
+    await tick()
+    const queryAll = vi.spyOn(document, 'querySelectorAll')
+    const late = document.createElement('button')
+
+    document.body.appendChild(late)
+    await tick(20)
+
+    expect(late.getAttribute(PART)).toBe('primitive.button')
+    expect(queryAll.mock.calls.some(([selector]) => selector === 'button')).toBe(false)
+  })
+
+  it('maps current DSH semantic markers to component Parts, variants, and states', async () => {
+    document.body.innerHTML = `
+      <div data-phase="session">
+        <header>Conversation</header>
+        <div data-conversation-scroll>
+          <div data-chat-anchor-key="m1" data-chat-flow-kind="user-message"><div>hello</div></div>
+          <div data-composer-seat><textarea></textarea><button>send</button></div>
+          <div data-variant="others" data-state="running">tool</div>
+        </div>
+      </div>
+      <div role="presentation">
+        <div aria-hidden="true"></div>
+        <div role="dialog"><nav><button aria-current="true">Appearance</button></nav></div>
+      </div>
+      <div role="menu"><div role="menuitem" aria-selected="true">Item</div></div>
+      <div role="tooltip">Tip</div>
+    `
+    dispose = startPartStamper()
+    await tick()
+
+    expect(document.querySelector('[data-phase]')?.getAttribute(PART)).toBe('conversation.root')
+    expect(document.querySelector('header')?.getAttribute(PART)).toBe('conversation.header')
+    expect(document.querySelector('[data-conversation-scroll]')?.getAttribute(PART)).toBe('conversation.scroller')
+    expect(document.querySelector('[data-composer-seat]')?.getAttribute(PART)).toBe('conversation.composer')
+    expect(document.querySelector('[data-chat-anchor-key]')).toMatchObject({
+      dataset: expect.objectContaining({ dshThemePart: 'conversation.message', dshThemeVariant: 'user' }),
+    })
+    expect(document.querySelector('[data-variant="others"]')).toMatchObject({
+      dataset: expect.objectContaining({ dshThemePart: 'tool.card', dshThemeState: 'running' }),
+    })
+    expect(document.querySelector('[role="dialog"]')?.getAttribute(PART)).toBe('settings.panel')
+    expect(document.querySelector('[aria-hidden="true"]')?.getAttribute(PART)).toBe('primitive.dialog-mask')
+    expect(document.querySelector('nav button')).toMatchObject({
+      dataset: expect.objectContaining({ dshThemePart: 'settings.row', dshThemeState: 'selected' }),
+    })
+    expect(document.querySelector('[role="menu"]')?.getAttribute(PART)).toBe('primitive.menu-surface')
+    expect(document.querySelector('[role="menuitem"]')?.getAttribute(PART)).toBe('primitive.menu-item')
+    expect(document.querySelector('[role="tooltip"]')?.getAttribute(PART)).toBe('primitive.tooltip')
+  })
+
+  it('preserves Part attributes owned by the DSH component', async () => {
+    buildShellFixture()
+    const button = document.querySelector('button') as HTMLButtonElement
+    button.setAttribute(PART, 'primitive.button')
+    dispose = startPartStamper()
+    await tick()
+
+    dispose()
+    dispose = undefined
+
+    expect(button.getAttribute(PART)).toBe('primitive.button')
+  })
+
+  it('retracts plugin attributes when a stamped subtree leaves the DOM', async () => {
+    buildShellFixture()
+    dispose = startPartStamper()
+    await tick()
+    const button = document.querySelector('button') as HTMLButtonElement
+    expect(button.getAttribute(PART)).toBe('primitive.button')
+
+    button.remove()
+    await tick(20)
+
+    expect(button.hasAttribute(PART)).toBe(false)
+  })
+
   it('retracts every shim write on dispose', async () => {
     buildShellFixture()
     dispose = startPartStamper()
@@ -139,5 +219,21 @@ describe('part anchor shim', () => {
     dispose = undefined
     expect(wrapper.style.background).toBe('var(--dsw-alias-bg-base)')
     expect(document.body.hasAttribute('data-dsh-skin-backdrop')).toBe(true) // flag owned by presenter, not shim
+  })
+
+  it('does not overwrite a later DSH background write when retracting backdrop transparency', async () => {
+    buildShellFixture()
+    const wrapper = document.querySelector<HTMLElement>('#root > *') as HTMLElement
+    wrapper.style.background = 'var(--dsw-alias-bg-base)'
+    document.body.setAttribute('data-dsh-skin-backdrop', '1')
+    dispose = startPartStamper()
+    await tick()
+    expect(wrapper.style.background).toBe('transparent')
+
+    wrapper.style.background = 'rgb(1, 2, 3)'
+    document.body.removeAttribute('data-dsh-skin-backdrop')
+    await tick(20)
+
+    expect(wrapper.style.background).toBe('rgb(1, 2, 3)')
   })
 })

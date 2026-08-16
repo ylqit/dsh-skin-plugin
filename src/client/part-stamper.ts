@@ -1,18 +1,20 @@
 /**
  * Part-anchor shim for official dsh builds. The official shell components do
  * not stamp the `data-dsh-theme-part`/`data-dsh-theme-variant` attributes the
- * compiled part CSS targets (those belong to the unreleased synchronized-skins
- * harness contract), so this shim maintains every anchor it can identify from
+ * plugin's Theme Parts v2 CSS targets, so this shim maintains every anchor it can identify from
  * stable structural landmarks — never from generated CSS-module class names.
  * Coverage is best-effort and documented in the README; uncovered parts stay
  * inert instead of matching the wrong elements.
  */
 
 const PART = 'data-dsh-theme-part'
+const VARIANT = 'data-dsh-theme-variant'
+const STATE = 'data-dsh-theme-state'
 const SHIM_OWNED = 'data-dsh-skin-shim'
 
 interface StampedRegistry {
-  elements: Set<HTMLElement>
+  /** Only attributes written by this plugin, paired with the values it owns. */
+  attributes: Map<HTMLElement, Map<string, string>>
   /** Opaque shell surfaces cleared while a backdrop is active, to their previous inline background. */
   surfaces: Map<HTMLElement, string>
 }
@@ -32,7 +34,7 @@ const OVERLAY_SELECTOR = '[data-shell-overlay]'
  */
 export function startPartStamper(): () => void {
   if (typeof document === 'undefined' || document.body === null) return () => {}
-  const registry: StampedRegistry = { elements: new Set(), surfaces: new Map() }
+  const registry: StampedRegistry = { attributes: new Map(), surfaces: new Map() }
   const backdrop = document.createElement('div')
   backdrop.setAttribute(SHIM_OWNED, 'backdrop')
   backdrop.setAttribute(PART, 'shell.backdrop')
@@ -49,12 +51,26 @@ export function startPartStamper(): () => void {
     root.style.zIndex = '1'
   }
   document.body.insertBefore(backdrop, document.body.firstChild)
-  document.body.setAttribute(PART, 'app.root')
-  registry.elements.add(document.body)
+  stamp(registry, document.body, 'app.root')
 
-  sweep(registry)
-  const observer = new MutationObserver(() => {
-    schedule(registry)
+  stampStructure(registry)
+  stampSubtree(registry, document.body)
+  syncBackdropSurfaces(registry)
+  const pending = new Set<Element>()
+  let structureDirty = false
+  let backdropDirty = false
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === 'attributes') {
+        backdropDirty = true
+        continue
+      }
+      structureDirty = true
+      for (const node of record.addedNodes) {
+        if (node instanceof Element) pending.add(node)
+      }
+    }
+    schedule()
   })
   observer.observe(document.body, {
     childList: true,
@@ -63,12 +79,18 @@ export function startPartStamper(): () => void {
     attributeFilter: [BACKDROP_FLAG],
   })
   let scheduled = false
-  function schedule(registryValue: StampedRegistry): void {
+  function schedule(): void {
     if (scheduled) return
     scheduled = true
     const run = (): void => {
       scheduled = false
-      sweep(registryValue)
+      pruneDisconnected(registry)
+      for (const element of pending) stampSubtree(registry, element)
+      pending.clear()
+      if (structureDirty) stampStructure(registry)
+      if (structureDirty || backdropDirty) syncBackdropSurfaces(registry)
+      structureDirty = false
+      backdropDirty = false
     }
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run)
     else setTimeout(run, 16)
@@ -81,50 +103,118 @@ export function startPartStamper(): () => void {
       root.style.position = previousRootStyles.position
       root.style.zIndex = previousRootStyles.zIndex
     }
-    for (const element of registry.elements) {
-      if (element.hasAttribute(PART)) element.removeAttribute(PART)
+    for (const [element, attributes] of registry.attributes) {
+      for (const [name, value] of attributes) {
+        if (element.getAttribute(name) === value) element.removeAttribute(name)
+      }
     }
-    registry.elements.clear()
+    registry.attributes.clear()
     restoreSurfaces(registry)
   }
 }
 
-/** One idempotent stamping pass over every supported landmark. */
-function sweep(registry: StampedRegistry): void {
-  const stamp = (element: Element | null | undefined, part: string): void => {
-    if (element === null || element === undefined || !(element instanceof HTMLElement)) return
-    if (element.hasAttribute(SHIM_OWNED)) return
-    if (element.getAttribute(PART) === part) {
-      registry.elements.add(element)
-      return
-    }
-    if (element.hasAttribute(PART)) return // owned by React props or another shim
-    element.setAttribute(PART, part)
-    registry.elements.add(element)
-  }
-
+/** Current DSH structural anchors that do not belong to one added subtree. */
+function stampStructure(registry: StampedRegistry): void {
   // Three-column frame: the element hosting the official shell.overlay layer.
   const overlay = document.querySelector(OVERLAY_SELECTOR)
   const frame = overlay?.parentElement ?? undefined
   if (frame !== undefined) {
     const columns = [...frame.children].filter(child => !(child instanceof HTMLElement)
       || (!child.hasAttribute('data-shell-overlay') && !child.hasAttribute('data-side')))
-    stamp(columns[0], 'shell.sidebar')
-    stamp(columns[1], 'shell.main')
-    stamp(columns[2], 'shell.details')
+    stamp(registry, columns[0], 'shell.sidebar')
+    stamp(registry, columns[1], 'shell.main')
+    stamp(registry, columns[2], 'shell.details')
     const center = columns[1]
     if (center !== undefined) {
-      stamp(center.firstElementChild, 'conversation.root')
-      stampComposer(center, stamp)
+      stamp(registry, center.firstElementChild, 'conversation.root')
+      stampComposer(center, (element, part) => { stamp(registry, element, part) })
     }
   }
 
-  // Generic primitives: stamp every native control without variant/state.
-  for (const button of document.querySelectorAll('button')) stamp(button, 'primitive.button')
-  for (const input of document.querySelectorAll('input, textarea')) stamp(input, 'primitive.input')
-  for (const dialog of document.querySelectorAll('[role="dialog"]')) stamp(dialog, 'primitive.dialog-surface')
+  const conversation = document.querySelector('[data-phase]')
+  stamp(registry, conversation, 'conversation.root')
+  stamp(registry, document.querySelector('[data-conversation-scroll]'), 'conversation.scroller')
+  stamp(registry, document.querySelector('[data-composer-seat]'), 'conversation.composer')
+  if (conversation !== null) {
+    const header = [...conversation.children].find(child => !child.hasAttribute('data-conversation-scroll'))
+    stamp(registry, header, 'conversation.header')
+  }
+}
 
-  syncBackdropSurfaces(registry)
+/** Stamp only an inserted subtree; streaming chat never triggers a page-wide control scan. */
+function stampSubtree(registry: StampedRegistry, root: Element): void {
+  const select = (selector: string): Element[] => [
+    ...(root.matches(selector) ? [root] : []),
+    ...root.querySelectorAll(selector),
+  ]
+
+  for (const message of select('[data-chat-anchor-key]')) {
+    stamp(registry, message, 'conversation.message')
+    stamp(registry, message.firstElementChild, 'conversation.message-content')
+    const kind = message.getAttribute('data-chat-flow-kind') ?? ''
+    if (kind.includes('user')) ownAttribute(registry, message as HTMLElement, VARIANT, 'user')
+    else if (kind.includes('assistant')) ownAttribute(registry, message as HTMLElement, VARIANT, 'assistant')
+  }
+
+  for (const card of select('[data-variant="others"], [data-terminal], [data-read], [data-web], [data-search], [data-diff]')) {
+    stamp(registry, card, 'tool.card')
+    const state = card.getAttribute('data-state') ?? (card.hasAttribute('data-running') ? 'running' : '')
+    if (state === 'running' || state === 'ongoing') ownAttribute(registry, card as HTMLElement, STATE, 'running')
+    else if (state === 'error') ownAttribute(registry, card as HTMLElement, STATE, 'error')
+    else if (state === 'success' || state === 'ok') ownAttribute(registry, card as HTMLElement, STATE, 'success')
+  }
+
+  for (const dialog of select('[role="dialog"]')) {
+    const settings = dialog.querySelector('nav') !== null
+    stamp(registry, dialog, settings ? 'settings.panel' : 'primitive.dialog-surface')
+    const mask = dialog.previousElementSibling
+    if (mask?.getAttribute('aria-hidden') === 'true') stamp(registry, mask, 'primitive.dialog-mask')
+    if (settings) {
+      for (const row of dialog.querySelectorAll('nav button')) {
+        stamp(registry, row, 'settings.row')
+        if (row.getAttribute('aria-current') === 'true') ownAttribute(registry, row as HTMLElement, STATE, 'selected')
+      }
+    }
+  }
+
+  for (const menu of select('[role="menu"], [role="listbox"]')) stamp(registry, menu, 'primitive.menu-surface')
+  for (const item of select('[role="menuitem"], [role="option"]')) {
+    stamp(registry, item, 'primitive.menu-item')
+    if (item.getAttribute('aria-selected') === 'true') ownAttribute(registry, item as HTMLElement, STATE, 'selected')
+  }
+  for (const tooltip of select('[role="tooltip"]')) stamp(registry, tooltip, 'primitive.tooltip')
+
+  // Generic primitives: stamp every native control without variant/state.
+  for (const button of select('button')) stamp(registry, button, 'primitive.button')
+  for (const input of select('input, textarea')) {
+    stamp(registry, input, 'primitive.input')
+    if (input.parentElement?.querySelector('button') === null) stamp(registry, input.parentElement, 'primitive.input-control')
+  }
+}
+
+function stamp(registry: StampedRegistry, element: Element | null | undefined, part: string): void {
+  if (element === null || element === undefined || !(element instanceof HTMLElement)) return
+  if (element.hasAttribute(SHIM_OWNED)) return
+  ownAttribute(registry, element, PART, part)
+}
+
+function ownAttribute(registry: StampedRegistry, element: HTMLElement, name: string, value: string): void {
+  if (element.hasAttribute(name)) return
+  element.setAttribute(name, value)
+  const attributes = registry.attributes.get(element) ?? new Map<string, string>()
+  attributes.set(name, value)
+  registry.attributes.set(element, attributes)
+}
+
+function pruneDisconnected(registry: StampedRegistry): void {
+  for (const [element, attributes] of [...registry.attributes]) {
+    if (element.isConnected) continue
+    for (const [name, value] of attributes) {
+      if (element.getAttribute(name) === value) element.removeAttribute(name)
+    }
+    registry.attributes.delete(element)
+    registry.surfaces.delete(element)
+  }
 }
 
 /**
@@ -173,6 +263,7 @@ function restoreSurfaces(registry: StampedRegistry): void {
 }
 
 function restoreSurface(element: HTMLElement, previous: string): void {
+  if (element.style.background !== 'transparent') return
   if (previous === '') element.style.removeProperty('background')
   else element.style.background = previous
 }

@@ -1,6 +1,6 @@
-export const SKIN_SCHEMA_VERSION = 1 as const
-export const SKIN_SCHEMA_VERSION_V2 = 2 as const
-export const THEME_PARTS_VERSION = 1 as const
+export const SKIN_SCHEMA_VERSION = 3 as const
+export const THEME_SCHEMA_VERSION = 2 as const
+export const THEME_PARTS_VERSION = 2 as const
 export const SKIN_CAPABILITIES = ['tokens', 'backdrop', 'component-parts', 'component-experience'] as const
 export const SKIN_PLACEMENTS = [
   'skin.shell.top',
@@ -13,6 +13,20 @@ export const SKIN_PLACEMENTS = [
 
 export type SkinPlacement = (typeof SKIN_PLACEMENTS)[number]
 export type SkinSource = 'builtin' | 'local'
+export type SkinImportErrorCode = 'UNSUPPORTED_PROTOCOL' | 'INVALID_ARCHIVE' | 'INVALID_ASSET' | 'SECURITY_LIMIT'
+
+export interface SkinImportFailure {
+  code: SkinImportErrorCode
+  message: string
+  field?: string
+}
+
+export interface SkinRuntimeCompatibility {
+  dshVersion: '0.1.0-rc.5'
+  skinSchemaVersion: typeof SKIN_SCHEMA_VERSION
+  themeSchemaVersion: typeof THEME_SCHEMA_VERSION
+  themePartsVersion: typeof THEME_PARTS_VERSION
+}
 
 export type ThemeTokenName = string
 export type ThemePartId =
@@ -47,6 +61,13 @@ export interface ThemeShadow {
   color: ThemeColorValue
 }
 
+export interface ThemeSurfaceImage {
+  assetUrl: string
+  fit: 'cover' | 'contain'
+  positionX: number
+  positionY: number
+}
+
 export interface ThemePartStyle {
   foreground?: ThemeColorValue
   background?: ThemeColorValue
@@ -66,6 +87,7 @@ export interface ThemePartStyle {
   lineHeight?: number
   letterSpacingPx?: number
   transitionDurationMs?: number
+  surfaceImage?: ThemeSurfaceImage
 }
 
 export interface ThemePartRule {
@@ -84,7 +106,7 @@ export interface ThemeBackdropMode {
   blurPx: number
 }
 
-export interface ThemeLayerDefinition {
+export interface ThemeLayerV2 {
   tokens: Partial<Record<ThemeTokenName, ThemeModePair<string>>>
   backdrop?: ThemeModePair<ThemeBackdropMode>
   partStyles?: readonly ThemePartRule[]
@@ -95,17 +117,7 @@ export interface SkinAssetManifest {
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp'
   sha256: string
   bytes: number
-  purpose?: 'backdrop' | 'preview' | 'component'
-}
-
-export interface SkinManifestV1 {
-  schemaVersion: typeof SKIN_SCHEMA_VERSION
-  id: string
-  name: string
-  version: string
-  themePartsVersion: typeof THEME_PARTS_VERSION
-  capabilities: readonly (typeof SKIN_CAPABILITIES)[number][]
-  assets: readonly SkinAssetManifest[]
+  purpose: 'backdrop' | 'preview' | 'component'
 }
 
 export interface SkinPreviewManifest {
@@ -122,22 +134,20 @@ export interface SkinExperienceManifest {
   placements: readonly SkinPlacement[]
 }
 
-export interface SkinManifestV2 {
-  schemaVersion: typeof SKIN_SCHEMA_VERSION_V2
+export interface SkinManifestV3 {
+  schemaVersion: typeof SKIN_SCHEMA_VERSION
   id: string
   name: string
   version: string
   author?: string
   description?: string
-  tags?: readonly string[]
+  tags: readonly string[]
   themePartsVersion: typeof THEME_PARTS_VERSION
   capabilities: readonly (typeof SKIN_CAPABILITIES)[number][]
-  preview: SkinPreviewManifest
+  preview?: SkinPreviewManifest
   assets: readonly SkinAssetManifest[]
   experience?: SkinExperienceManifest
 }
-
-export type SkinManifest = SkinManifestV1 | SkinManifestV2
 
 export interface SkinExperienceDescriptor {
   apiVersion: 1
@@ -163,6 +173,7 @@ export interface StoredSkinSummary {
   author?: string
   description?: string
   tags: readonly string[]
+  parts: readonly ThemePartId[]
   preview?: SkinPreviewUrls
   experience?: SkinExperienceDescriptor
 }
@@ -171,23 +182,31 @@ export interface SkinHostState {
   activationRevision: number
   activeFingerprint?: string
   previousConfirmed?: string
-  activeLayer?: ThemeLayerDefinition
+  activeLayer?: ThemeLayerV2
   activeExperience?: SkinExperienceDescriptor
   skins: readonly StoredSkinSummary[]
+}
+
+export interface SkinDraftDescriptor {
+  fingerprint: string
+  source: SkinSource
+  manifest: SkinManifestV3
+  layer: ThemeLayerV2
+  experience?: SkinExperienceDescriptor
 }
 
 export interface PrepareSkinResult {
   preparationId: string
   fingerprint?: string
   activationRevision: number
-  layer?: ThemeLayerDefinition
+  layer?: ThemeLayerV2
   experience?: SkinExperienceDescriptor
 }
 
 export interface CommitSkinResult {
   fingerprint?: string
   activationRevision: number
-  layer?: ThemeLayerDefinition
+  layer?: ThemeLayerV2
   experience?: SkinExperienceDescriptor
 }
 

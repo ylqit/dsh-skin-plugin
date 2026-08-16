@@ -5,10 +5,11 @@ import { basename, dirname, extname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { strToU8, zipSync, type Zippable } from 'fflate'
 import { compileExperience } from './author/compiler.ts'
+import { parseSkinFiles } from './host/archive.ts'
 import type {
-  SkinAssetManifest, SkinManifestV2, SkinPlacement, ThemeLayerDefinition,
+  SkinAssetManifest, SkinManifestV3, SkinPlacement, ThemeLayerV2,
 } from './shared/contracts.ts'
-import { SKIN_PLACEMENTS, SKIN_SCHEMA_VERSION_V2, THEME_PARTS_VERSION } from './shared/contracts.ts'
+import { SKIN_PLACEMENTS, SKIN_SCHEMA_VERSION, THEME_PARTS_VERSION } from './shared/contracts.ts'
 
 interface AuthorConfig {
   id: string
@@ -81,7 +82,7 @@ async function packTheme(root: string, requestedOutput?: string): Promise<void> 
   }
 
   const placements = Object.freeze([...(config.placements ?? [])])
-  let experience: SkinManifestV2['experience']
+  let experience: SkinManifestV3['experience']
   try {
     await readFile(resolve(root, 'experience', 'client.tsx'))
     if (placements.length === 0) throw new TypeError('skin.config.json 必须为 Experience 声明至少一个 placement')
@@ -101,20 +102,20 @@ async function packTheme(root: string, requestedOutput?: string): Promise<void> 
     if (placements.length > 0) throw new TypeError('声明了 placements，但缺少 experience/client.tsx')
   }
 
-  const capabilities: SkinManifestV2['capabilities'] = Object.freeze([
+  const capabilities: SkinManifestV3['capabilities'] = Object.freeze([
     ...(Object.keys(theme.tokens).length === 0 ? [] : ['tokens' as const]),
     ...(theme.backdrop === undefined ? [] : ['backdrop' as const]),
     ...((theme.partStyles?.length ?? 0) === 0 ? [] : ['component-parts' as const]),
     ...(experience === undefined ? [] : ['component-experience' as const]),
   ])
-  const manifest: SkinManifestV2 = {
-    schemaVersion: SKIN_SCHEMA_VERSION_V2,
+  const manifest: SkinManifestV3 = {
+    schemaVersion: SKIN_SCHEMA_VERSION,
     id: config.id,
     name: config.name,
     version: config.version,
     ...(config.author === undefined ? {} : { author: config.author }),
     ...(config.description === undefined ? {} : { description: config.description }),
-    ...(config.tags === undefined ? {} : { tags: config.tags }),
+    tags: config.tags ?? [],
     themePartsVersion: THEME_PARTS_VERSION,
     capabilities,
     preview: {
@@ -125,8 +126,7 @@ async function packTheme(root: string, requestedOutput?: string): Promise<void> 
     ...(experience === undefined ? {} : { experience }),
   }
   files['manifest.json'] = strToU8(`${JSON.stringify(manifest, null, 2)}\n`)
-  validatePackedFiles(manifest, theme, files)
-  const fingerprint = contentFingerprint(files)
+  const fingerprint = parseSkinFiles(files).fingerprint
   const zip: Zippable = Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, bytes]))
   const output = requestedOutput ?? resolve(root, 'dist', `${config.id}-${config.version}.dshskin`)
   await mkdir(dirname(output), { recursive: true })
@@ -166,9 +166,9 @@ function parseAuthorConfig(value: unknown): AuthorConfig {
   }
 }
 
-function parseThemeShape(value: unknown): ThemeLayerDefinition & { schemaVersion: number } {
+function parseThemeShape(value: unknown): ThemeLayerV2 & { schemaVersion: number } {
   const source = record(value, 'theme.json')
-  return source as unknown as ThemeLayerDefinition & { schemaVersion: number }
+  return source as unknown as ThemeLayerV2 & { schemaVersion: number }
 }
 
 function record(value: unknown, subject: string): Record<string, unknown> {
@@ -212,48 +212,6 @@ function imageMime(filename: string): SkinAssetManifest['mimeType'] {
 
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
-}
-
-function validatePackedFiles(
-  manifest: SkinManifestV2,
-  theme: ThemeLayerDefinition & { schemaVersion: number },
-  files: Readonly<Record<string, Uint8Array>>,
-): void {
-  if (theme.schemaVersion !== 1) throw new TypeError('theme.json.schemaVersion 必须为 1')
-  for (const asset of manifest.assets) {
-    const bytes = files[asset.path]
-    if (bytes === undefined || bytes.byteLength !== asset.bytes || sha256(bytes) !== asset.sha256) {
-      throw new TypeError(`资源清单与文件不一致: ${asset.path}`)
-    }
-    if (!matchesImageSignature(bytes, asset.mimeType)) throw new TypeError(`图片签名与 MIME 不符: ${asset.path}`)
-  }
-  for (const value of [manifest.preview.light, manifest.preview.dark]) {
-    const path = normalizeAssetPath(value)
-    if (!manifest.assets.some(asset => asset.path === path)) throw new TypeError(`预览资源未登记: ${path}`)
-  }
-  if (manifest.experience !== undefined) {
-    const bytes = files[manifest.experience.entry]
-    if (bytes === undefined || bytes.byteLength !== manifest.experience.bytes || sha256(bytes) !== manifest.experience.sha256) {
-      throw new TypeError('Experience Bundle 清单与文件不一致')
-    }
-    const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    if (!source.includes('window.__ModuleLoader__.load') || !source.includes(JSON.stringify(manifest.experience.moduleId))) {
-      throw new TypeError('Experience Bundle 模块 ID 与 manifest 不一致')
-    }
-  }
-}
-
-function matchesImageSignature(bytes: Uint8Array, mimeType: SkinAssetManifest['mimeType']): boolean {
-  if (mimeType === 'image/png') return bytes.length >= 8 && bytes.slice(0, 8).every((byte, index) => byte === [137, 80, 78, 71, 13, 10, 26, 10][index])
-  if (mimeType === 'image/jpeg') return bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9
-  return bytes.length >= 12 && new TextDecoder().decode(bytes.slice(0, 4)) === 'RIFF'
-    && new TextDecoder().decode(bytes.slice(8, 12)) === 'WEBP'
-}
-
-function contentFingerprint(files: Readonly<Record<string, Uint8Array>>): string {
-  const hash = createHash('sha256')
-  for (const name of Object.keys(files).sort()) hash.update(name).update('\0').update(files[name] as Uint8Array).update('\0')
-  return hash.digest('hex')
 }
 
 async function readJson(filename: string): Promise<unknown> {

@@ -1,56 +1,81 @@
-# DSH Skin Plugin
+# DSH Skin Plugin 0.3
 
-DeepSeek Harness WebUI 的换肤插件。通过导入 `.dshskin` 主题包，一次切换 Light/Dark 配色、背景与组件样式，并提供内置主题库与可视化的主题工作室。插件不修改会话、输入区等业务组件的逻辑。
+面向 DeepSeek Harness `0.1.0-rc.5` WebUI 的独立换肤插件。它只通过 DSH 插件与 Web 客户端服务工作，不修改 DSH 源码，也不替换会话、输入区等业务组件的 React 逻辑。
 
-## 快速开始
+本版本只接受 `.dshskin` schema v3、Theme Layer v2 与 Theme Parts v2。其他协议版本会在写盘前被拒绝，并保持当前主题和激活状态不变。
 
-在已安装 dsh 的环境中执行：
+## 安装
 
 ```powershell
 dsh plugin --profile web add @ylq77147/dsh-skin-plugin
 dsh --profile web
 ```
 
-插件必须安装进 dsh profile（其 peer 依赖由 profile 树统一提供），不要单独安装到普通项目中。从 git clone 安装见下文「从源码安装」；移除插件见「卸载插件」。
+插件必须安装到 DSH profile。启动后进入“设置 → 外观主题”，可以直接看到杰尼龟水舱、妙蛙种子生长舱和皮卡丘电能三个内置示例。
 
-启动后打开“设置 → 外观主题”：
+0.3 使用独立的 `$DSH_HOME/skins-v3` 目录。它不会读取、迁移或删除其他皮肤目录；首次启动保持 DSH 原始主题，直到用户主动激活皮肤。
 
-1. 在“内置主题”中试穿皮卡丘、杰尼龟或妙蛙种子，或点击“导入 `.dshskin`”上传本地主题包。
-2. 主题工作室会校验主题包中的图片与样式数据；校验失败时保留上一套有效主题。
-3. 点击“编辑与试穿”进入预览，或点击“激活”应用主题。
-4. 刷新页面后主题继续生效。
+## 外观主题页面
 
-主题的导入、编辑、删除与激活仅对从 Host 本机访问的同源页面开放，远程客户端只显示已激活的主题。主题库存放在 `$DSH_HOME/skins`；内置主题来自包内 `builtins/` 目录，不可删除。
+- 导入或导出 v3 `.dshskin`，管理不可变的本地皮肤版本。
+- 编辑 Light/Dark Token、背景、组件 Variant、State 与安全视觉属性。
+- 搜索 Shell、侧栏、会话、消息、输入区、基础控件、菜单、对话框、工具卡片和设置页面的 Part。
+- 为受支持的组件表面设置包内 PNG、JPEG 或 WebP 素材。
+- 使用局部预览或全页试穿；全页试穿始终显示独立的“退出全页试穿”按钮。
+- “恢复 DSH 默认”通过删除对应 Part 规则实现，不隐藏或删除 DSH 组件。
+- 撤销/重做、离开前未保存提示和修改摘要均在本地草稿中生效。
 
-## 皮肤包格式（`.dshskin`）
+编辑内置示例会创建本地副本，内置归档始终只读。保存后由完整归档内容生成新的不可变 SHA-256 指纹。
 
-v1 主题包包含 `manifest.json`、`theme.json` 与可选的 `assets/*`，支持配色、背景与组件样式。v2 在同一包中增加 Light/Dark 封面图与可选的 Experience 组件：
+## v3 皮肤包
+
+归档只允许以下条目：
+
+```text
+manifest.json
+theme.json
+assets/<安全文件名>
+experience/client.js   # 可选
+```
+
+最小清单示例：
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "id": "example-skin",
   "name": "Example Skin",
-  "version": "1.0.0",
-  "themePartsVersion": 1,
-  "capabilities": ["tokens", "backdrop", "component-parts", "component-experience"],
-  "preview": {
-    "light": "asset:assets/backdrop-light.webp",
-    "dark": "asset:assets/backdrop-dark.webp"
-  },
-  "assets": [],
-  "experience": {
-    "apiVersion": 1,
-    "moduleId": "dsh-skin:00000000-0000-4000-8000-000000000000",
-    "entry": "experience/client.js",
-    "sha256": "...",
-    "bytes": 1,
-    "placements": ["skin.shell.top"]
-  }
+  "version": "2.0.0",
+  "tags": [],
+  "themePartsVersion": 2,
+  "capabilities": ["tokens", "backdrop", "component-parts"],
+  "assets": []
 }
 ```
 
-Experience 组件接收以下 props：
+`theme.json` 必须使用 `schemaVersion: 2`。Part 规则只支持颜色、边框、圆角、结构化阴影、透明度、背景模糊、字体、间距、状态样式和受控包内背景素材；不接受任意 CSS、选择器、外部 URL、脚本 URL 或布局结构修改。
+
+导入流程先在内存中完成 ZIP 路径、展开大小、压缩比、清单、哈希、图片签名、能力和 Part 属性校验，通过后才原子落盘。稳定错误码为：
+
+- `UNSUPPORTED_PROTOCOL`：协议版本不受支持；
+- `INVALID_ARCHIVE`：清单、Theme Layer 或 Part 数据无效；
+- `INVALID_ASSET`：素材缺失、哈希、大小或图片签名错误；
+- `SECURITY_LIMIT`：路径、URL、ZIP 展开或其他安全限制被触发。
+
+有效 v3 皮肤不要求导入时当前页面已经出现所有 DOM 锚点。未出现的 Part 会暂时跳过，进入相应页面后再生效，编辑器会显示“当前页面暂无锚点”。
+
+## Experience 装饰组件
+
+Experience 只能为插件自己的挂件与浮层提供 React 组件。可用 Placement：
+
+- `skin.shell.top`
+- `skin.shell.bottom`
+- `skin.shell.floating`
+- `skin.sidebar.brand`
+- `skin.conversation.hero`
+- `skin.composer.decorator`
+
+组件 props：
 
 ```ts
 interface SkinExperienceComponentProps {
@@ -60,77 +85,35 @@ interface SkinExperienceComponentProps {
 }
 ```
 
-可用的 Placement 为 `skin.shell.top`、`skin.shell.bottom`、`skin.shell.floating`、`skin.sidebar.brand`、`skin.conversation.hero` 与 `skin.composer.decorator`。
+Bundle 只能依赖 DSH 提供的 React 运行时。插件会校验导出组件只能使用清单声明的 Placement，并在切换、停用或卸载时撤销挂件、模块记录和归属样式。Experience 在 WebUI 中执行，不是安全沙箱，只导入可信归档。
 
-导入时插件会校验文件完整性与图片签名，拒绝路径穿越、哈希不符、压缩炸弹等非法内容。Experience 组件直接在 WebUI 页面中执行，不是沙箱，请只导入你信任的包。
-
-## 创建主题
+## 创建与打包
 
 ```powershell
-pnpm skin:create my-theme
-```
-
-该命令在当前目录创建 `my-theme/` 模板，需要编辑的文件：
-
-- `skin.config.json`：名称、版本、封面与 Placement；
-- `theme.json`：配色、Light/Dark 背景与组件样式；
-- `assets/backdrop-light.webp`、`assets/backdrop-dark.webp`：背景图片；
-- `experience/client.tsx` 与 CSS Module：主题装饰组件。
-
-打包命令会编译主题源码并生成经过校验的 v2 主题包：
-
-```powershell
-pnpm skin:pack <主题目录>
-```
-
-默认输出为 `<主题目录>/dist/<id>-<version>.dshskin`，也可以用 `dsh-skin pack <主题目录> <输出.dshskin>` 指定输出位置。
-
-## 内置演示主题
-
-内置皮卡丘（电）、杰尼龟（水）、妙蛙种子（草/毒）三个主题，各自包含对应属性的配色、背景与装饰组件。
-
-Light/Dark 场景图由图像生成工具创建，角色透明图来自 [PokeAPI sprites 的 official-artwork 目录](https://github.com/PokeAPI/sprites/tree/master/sprites/pokemon/other/official-artwork)。这些素材仅作为本地个人演示资源；Pokémon 角色、名称与相关商标归其权利人所有，公开或商业分发前需自行取得授权。你可以用有授权的图像替换 `themes/*/assets/` 后重新运行 `skin:pack`。
-
-## 从源码安装（git clone）
-
-Git 仓库不包含构建产物，克隆后需要先构建，再把插件目录链接进 profile：
-
-```powershell
-git clone https://github.com/ylqit/dsh-skin-plugin.git
-cd dsh-skin-plugin
 pnpm install
 pnpm build
-dsh plugin --profile web add .
-dsh --profile web
+pnpm skin:create my-theme
+pnpm skin:pack my-theme
 ```
 
-修改源码后重新运行 `pnpm build` 并重启 dsh 即可生效，无需重新安装。
+模板和 CLI 只生成 v3。默认输出位于 `<主题目录>/dist/<id>-<version>.dshskin`。三个内置示例的源码位于 `themes/`，归档位于 `builtins/`；两者都通过相同的公开 v3 Parser 验证，没有示例专用路径。
 
-## 卸载插件
-
-```powershell
-dsh plugin --profile web remove @ylq77147/dsh-skin-plugin
-```
-
-该命令对 registry、tarball 与 git clone 三种安装方式通用。卸载只移除插件本身，`$DSH_HOME/skins` 中已导入的主题会保留；如需彻底清理，手动删除该目录。
-
-## 发布
-
-发布到 npm 的手工流程：
-
-1. 更新 `package.json` 中的 `version`。
-2. 运行 `pnpm check`（类型检查、测试、构建与合同校验）。
-3. 运行 `pnpm pack` 检查 tarball 内容（应包含 `lib/`、`builtins/`、`templates/`、`src/`、`cordis.patch.yml`），确认后删除临时 `.tgz`。
-4. 运行 `pnpm publish` 发布到 npmjs（`publishConfig.access` 已设为 public；发布目标是 `registry.npmjs.org`，不是下载用的镜像源）。
-5. 提交变更并打 tag（`v<version>`）后推送。
-
-## 开发与验证
+## 开发与发布验收
 
 ```powershell
 pnpm typecheck
 pnpm test
 pnpm build
-pnpm check    # typecheck + test + build + 合同校验脚本（scripts/check-contract.mjs）
+pnpm check
+pnpm pack
 ```
 
-测试位于 `tests/` 目录，覆盖主题包导入、激活、回退、首屏注入与组件样式打标等链路。
+发布包必须包含 `lib/`、`builtins/`、`templates/`、`cordis.patch.yml` 与本说明，并能从 tarball 安装到干净的目标 DSH profile。三个内置归档不依赖源码目录。
+
+## 卸载
+
+```powershell
+dsh plugin --profile web remove @ylq77147/dsh-skin-plugin
+```
+
+卸载插件不会删除 `$DSH_HOME/skins-v3`，以避免不可恢复的数据丢失；需要清理时由用户明确手动处理。

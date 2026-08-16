@@ -1,9 +1,8 @@
 /**
- * Contract gate: the plugin must not depend on the unreleased Harness theme
- * contract at runtime. Fails when any source or build artifact references
- * `@deepseek-ai/dsh-client-ui-theme`, then smoke-imports the built host entry
- * so missing/stale exports fail `pnpm check` instead of a user's boot.
- * Also fails when the browser client bundle hoists a require of any Node
+ * Contract gate for the single v3/current-DSH release line. It rejects removed
+ * protocol type names and the retired storage namespace, then smoke-imports
+ * the built host entry so missing/stale exports fail before publication.
+ * It also rejects a browser bundle that hoists a require of any Node
  * builtin (e.g. fflate's node export condition pulling `module`): the dsh
  * client module table can only resolve platform seeds and client entries.
  */
@@ -14,7 +13,12 @@ import { extname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
-const FORBIDDEN = '@deepseek-ai/dsh-client-ui-theme'
+const FORBIDDEN = [
+  'ThemeLayerDefinition',
+  'SkinManifestV1',
+  'SkinManifestV2',
+  "dshHomePath('skins')",
+]
 const SCANNED_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.yml', '.yaml'])
 const SKIP_DIRECTORIES = new Set(['node_modules', 'reference', '.git', 'build'])
 
@@ -33,12 +37,14 @@ const violations = []
 for (const base of ['src', 'lib']) {
   for await (const file of walk(resolve(ROOT, base))) {
     const content = await readFile(file, 'utf8')
-    if (content.includes(FORBIDDEN)) violations.push(file)
+    for (const token of FORBIDDEN) {
+      if (content.includes(token)) violations.push({ file, token })
+    }
   }
 }
 if (violations.length > 0) {
-  console.error(`contract gate: forbidden reference ${FORBIDDEN} found in:`)
-  for (const file of violations) console.error(`  ${relative(process.cwd(), file)}`)
+  console.error('contract gate: removed protocol/storage references found in:')
+  for (const violation of violations) console.error(`  ${relative(process.cwd(), violation.file)}: ${violation.token}`)
   process.exit(1)
 }
 
@@ -54,4 +60,4 @@ if (nodeRequires.length > 0) {
 
 const entry = resolve(ROOT, 'lib', 'index.js')
 await import(pathToFileURL(entry).href)
-console.log('contract gate: no theme-package references; no Node builtins in client bundle; lib/index.js imports cleanly')
+console.log('contract gate: v3/current-DSH surface clean; no Node builtins in client bundle; lib/index.js imports cleanly')

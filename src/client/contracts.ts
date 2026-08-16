@@ -1,6 +1,7 @@
 import type {
-  SkinHostState, ThemeLayerDefinition, ThemePartInspection, ThemeTokenInspection,
+  SkinHostState, ThemeLayerV2, ThemePartInspection, ThemeTokenInspection,
 } from '../shared/contracts.ts'
+import type { ClientModuleService } from './experience-runtime.ts'
 
 export interface HostObservable<T> {
   getSnapshot(): T
@@ -22,6 +23,7 @@ export interface ThemeService {
 
 export interface ClientContext {
   theme: ThemeService
+  modules: ClientModuleService
   connection: { isLoopback: boolean }
   slots: {
     inject(name: string, callback: () => (() => void)): () => void
@@ -33,10 +35,14 @@ export interface ClientContext {
 
 export interface StudioSnapshot {
   host: SkinHostState | undefined
-  draft: ThemeLayerDefinition
+  draft: ThemeLayerV2
   draftName: string
   busy: boolean
   previewing: boolean
+  dirty: boolean
+  canUndo: boolean
+  canRedo: boolean
+  changes: readonly string[]
   localManagement: boolean
   error: string | undefined
   tokens: readonly ThemeTokenInspection[]
@@ -51,6 +57,11 @@ export interface SkinStudioInjected {
   updateBackdrop(mode: 'light' | 'dark', field: 'fallbackColor' | 'focusX' | 'focusY' | 'dim' | 'blurPx', value: string): void
   updateBackdropImage(mode: 'light' | 'dark', file: File): void
   upsertPartRule(part: string, variant: string, state: string, field: string, light: string, dark: string): void
+  setPartEnabled(part: string, enabled: boolean): void
+  resetPartProperty(part: string, variant: string, state: string, field: keyof import('../shared/contracts.ts').ThemePartStyle): void
+  updatePartSurfaceImage(part: string, variant: string, state: string, mode: 'light' | 'dark', file: File): void
+  undo(): void
+  redo(): void
   importSkin(file: File): void
   saveDraft(): void
   exportDraft(): void

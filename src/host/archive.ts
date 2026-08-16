@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto'
 import { unzipSync, type UnzipFileInfo } from 'fflate'
 import { validateThemeLayer } from '../shared/theme-layer.ts'
 import {
-  SKIN_CAPABILITIES, SKIN_PLACEMENTS, SKIN_SCHEMA_VERSION, SKIN_SCHEMA_VERSION_V2, THEME_PARTS_VERSION,
+  SKIN_CAPABILITIES, SKIN_PLACEMENTS, SKIN_SCHEMA_VERSION, THEME_PARTS_VERSION, THEME_SCHEMA_VERSION,
   type SkinAssetManifest, type SkinExperienceDescriptor, type SkinExperienceManifest,
-  type SkinManifest, type SkinManifestV1, type SkinManifestV2, type SkinPlacement,
-  type SkinPreviewManifest, type SkinPreviewUrls, type ThemeBackdropMode, type ThemeLayerDefinition,
+  type SkinImportErrorCode,
+  type SkinManifestV3, type SkinPlacement,
+  type SkinPreviewManifest, type SkinPreviewUrls, type ThemeBackdropMode, type ThemeLayerV2,
+  type ThemeSurfaceImage,
 } from '../shared/contracts.ts'
 
 export const MAX_ARCHIVE_BYTES = 24 * 1024 * 1024
@@ -20,12 +22,22 @@ const ASSET_PATH = /^assets\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const HASH = /^[a-f0-9]{64}$/
 const MODULE_ID = /^dsh-skin:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const EXPERIENCE_ENTRY = 'experience/client.js'
-const V1_CAPABILITIES = ['tokens', 'backdrop', 'component-parts'] as const
 
+export class SkinArchiveError extends TypeError {
+  constructor(
+    readonly code: SkinImportErrorCode,
+    message: string,
+    readonly field?: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+    this.name = 'SkinArchiveError'
+  }
+}
 export interface ParsedSkinArchive {
   fingerprint: string
-  manifest: SkinManifest
-  layer: ThemeLayerDefinition
+  manifest: SkinManifestV3
+  layer: ThemeLayerV2
   preview?: SkinPreviewUrls
   experience?: SkinExperienceDescriptor
   files: ReadonlyMap<string, Uint8Array>
@@ -33,6 +45,14 @@ export interface ParsedSkinArchive {
 
 /** Parse and authenticate one .dshskin ZIP before anything reaches disk. */
 export function parseSkinArchive(archive: Uint8Array): ParsedSkinArchive {
+  try {
+    return parseSkinArchiveUnchecked(archive)
+  } catch (error) {
+    throw stableArchiveError(error)
+  }
+}
+
+function parseSkinArchiveUnchecked(archive: Uint8Array): ParsedSkinArchive {
   if (archive.byteLength === 0 || archive.byteLength > MAX_ARCHIVE_BYTES) {
     throw new TypeError(`skin archive must contain 1 through ${String(MAX_ARCHIVE_BYTES)} bytes`)
   }
@@ -53,13 +73,24 @@ export function parseSkinArchive(archive: Uint8Array): ParsedSkinArchive {
     if (error instanceof TypeError) throw error
     throw new TypeError('skin archive must be a supported ZIP file', { cause: error })
   }
-  return parseSkinFiles(entries, count)
+  return parseSkinFilesUnchecked(entries, count)
 }
 
 /** Revalidate the persisted immutable file set during Host startup. */
 export function parseSkinFiles(
   entries: Record<string, Uint8Array>,
   archiveEntryCount = Object.keys(entries).length,
+): ParsedSkinArchive {
+  try {
+    return parseSkinFilesUnchecked(entries, archiveEntryCount)
+  } catch (error) {
+    throw stableArchiveError(error)
+  }
+}
+
+function parseSkinFilesUnchecked(
+  entries: Record<string, Uint8Array>,
+  archiveEntryCount: number,
 ): ParsedSkinArchive {
   const names = Object.keys(entries).sort()
   if (names.length !== archiveEntryCount) throw new TypeError('skin archive contains duplicate entry names')
@@ -68,7 +99,7 @@ export function parseSkinFiles(
   }
 
   const manifest = parseManifest(parseJson(entries['manifest.json'], 'manifest.json'))
-  const supportsExperience = manifest.schemaVersion === SKIN_SCHEMA_VERSION_V2 && manifest.experience !== undefined
+  const supportsExperience = manifest.experience !== undefined
   const unsupported = names.find(name => name !== 'manifest.json' && name !== 'theme.json'
     && !ASSET_PATH.test(name) && !(supportsExperience && name === EXPERIENCE_ENTRY))
   if (unsupported !== undefined) throw new TypeError(`skin archive contains unsupported entry ${JSON.stringify(unsupported)}`)
@@ -136,21 +167,29 @@ function optionalString(value: unknown, subject: string, maximum: number): strin
   return value === undefined ? undefined : requiredString(value, subject, maximum)
 }
 
-function parseManifest(value: unknown): SkinManifest {
+function parseManifest(value: unknown): SkinManifestV3 {
   const source = object(value, 'manifest.json')
-  if (source.schemaVersion === SKIN_SCHEMA_VERSION) return parseManifestV1(source)
-  if (source.schemaVersion === SKIN_SCHEMA_VERSION_V2) return parseManifestV2(source)
-  throw new TypeError(`manifest.json.schemaVersion must be ${String(SKIN_SCHEMA_VERSION)} or ${String(SKIN_SCHEMA_VERSION_V2)}`)
-}
-
-function commonManifest(source: Record<string, unknown>, schemaVersion: 1 | 2) {
+  if (source.schemaVersion !== SKIN_SCHEMA_VERSION) {
+    throw new SkinArchiveError(
+      'UNSUPPORTED_PROTOCOL',
+      `manifest.json.schemaVersion must be ${String(SKIN_SCHEMA_VERSION)}`,
+      'manifest.json.schemaVersion',
+    )
+  }
+  exactKeys(source, [
+    'schemaVersion', 'id', 'name', 'version', 'author', 'description', 'tags',
+    'themePartsVersion', 'capabilities', 'preview', 'assets', 'experience',
+  ], 'manifest.json')
   if (source.themePartsVersion !== THEME_PARTS_VERSION) {
-    throw new TypeError(`manifest.json.themePartsVersion must be ${String(THEME_PARTS_VERSION)}`)
+    throw new SkinArchiveError(
+      'UNSUPPORTED_PROTOCOL',
+      `manifest.json.themePartsVersion must be ${String(THEME_PARTS_VERSION)}`,
+      'manifest.json.themePartsVersion',
+    )
   }
   if (!Array.isArray(source.capabilities)) throw new TypeError('manifest.json.capabilities must be an array')
-  const allowed = schemaVersion === 1 ? V1_CAPABILITIES as readonly string[] : SKIN_CAPABILITIES as readonly string[]
   const capabilities = source.capabilities.map((capability) => {
-    if (typeof capability !== 'string' || !allowed.includes(capability)) {
+    if (typeof capability !== 'string' || !(SKIN_CAPABILITIES as readonly string[]).includes(capability)) {
       throw new TypeError(`manifest.json contains unsupported capability ${JSON.stringify(capability)}`)
     }
     return capability as (typeof SKIN_CAPABILITIES)[number]
@@ -159,35 +198,29 @@ function commonManifest(source: Record<string, unknown>, schemaVersion: 1 | 2) {
   if (!Array.isArray(source.assets) || source.assets.length > MAX_ASSETS) {
     throw new TypeError(`manifest.json.assets must contain at most ${String(MAX_ASSETS)} entries`)
   }
-  const assets = source.assets.map((asset, index) => parseAsset(asset, index, schemaVersion))
+  const assets = source.assets.map((asset, index) => parseAsset(asset, index))
   if (new Set(assets.map(asset => asset.path)).size !== assets.length) throw new TypeError('manifest.json.assets contains duplicate paths')
-  return {
+  return Object.freeze({
+    schemaVersion: SKIN_SCHEMA_VERSION,
     id: requiredString(source.id, 'manifest.json.id', 80),
     name: requiredString(source.name, 'manifest.json.name', 120),
     version: requiredString(source.version, 'manifest.json.version', 40),
+    ...optionalFields(source),
+    tags: parseTags(source.tags),
     themePartsVersion: THEME_PARTS_VERSION,
     capabilities: Object.freeze(capabilities),
     assets: Object.freeze(assets),
-  }
-}
-
-function parseManifestV1(source: Record<string, unknown>): SkinManifestV1 {
-  exactKeys(source, ['schemaVersion', 'id', 'name', 'version', 'themePartsVersion', 'capabilities', 'assets'], 'manifest.json')
-  return Object.freeze({ schemaVersion: SKIN_SCHEMA_VERSION, ...commonManifest(source, 1) })
-}
-
-function parseManifestV2(source: Record<string, unknown>): SkinManifestV2 {
-  exactKeys(source, [
-    'schemaVersion', 'id', 'name', 'version', 'author', 'description', 'tags',
-    'themePartsVersion', 'capabilities', 'preview', 'assets', 'experience',
-  ], 'manifest.json')
-  return Object.freeze({
-    schemaVersion: SKIN_SCHEMA_VERSION_V2,
-    ...commonManifest(source, 2),
-    ...optionalFields(source),
-    tags: parseTags(source.tags),
-    preview: parsePreview(source.preview),
+    ...(source.preview === undefined ? {} : { preview: parsePreview(source.preview) }),
     ...(source.experience === undefined ? {} : { experience: parseExperience(source.experience) }),
+  } satisfies SkinManifestV3)
+}
+
+function stableArchiveError(error: unknown): SkinArchiveError {
+  if (error instanceof SkinArchiveError) return error
+  const message = error instanceof Error ? error.message : String(error)
+  const security = /compression-ratio|expands beyond|at most \d+ entries|unsafe|unsupported entry|path traversal|external URL|managed (?:asset|URL)/iu.test(message)
+  return new SkinArchiveError(security ? 'SECURITY_LIMIT' : 'INVALID_ARCHIVE', message, undefined, {
+    cause: error instanceof Error ? error : undefined,
   })
 }
 
@@ -198,7 +231,6 @@ function optionalFields(source: Record<string, unknown>): { author?: string; des
 }
 
 function parseTags(value: unknown): readonly string[] {
-  if (value === undefined) return Object.freeze([])
   if (!Array.isArray(value) || value.length > 12) throw new TypeError('manifest.json.tags must contain at most twelve strings')
   const tags = value.map((tag, index) => requiredString(tag, `manifest.json.tags[${String(index)}]`, 40))
   if (new Set(tags).size !== tags.length) throw new TypeError('manifest.json.tags contains duplicates')
@@ -246,12 +278,10 @@ function parseExperience(value: unknown): SkinExperienceManifest {
   })
 }
 
-function parseAsset(value: unknown, index: number, schemaVersion: 1 | 2): SkinAssetManifest {
+function parseAsset(value: unknown, index: number): SkinAssetManifest {
   const subject = `manifest.json.assets[${String(index)}]`
   const source = object(value, subject)
-  exactKeys(source, schemaVersion === 1
-    ? ['path', 'mimeType', 'sha256', 'bytes']
-    : ['path', 'mimeType', 'sha256', 'bytes', 'purpose'], subject)
+  exactKeys(source, ['path', 'mimeType', 'sha256', 'bytes', 'purpose'], subject)
   if (typeof source.path !== 'string' || !ASSET_PATH.test(source.path)) throw new TypeError(`${subject}.path is unsafe`)
   if (source.mimeType !== 'image/jpeg' && source.mimeType !== 'image/png' && source.mimeType !== 'image/webp') {
     throw new TypeError(`${subject}.mimeType is unsupported`)
@@ -260,7 +290,7 @@ function parseAsset(value: unknown, index: number, schemaVersion: 1 | 2): SkinAs
   if (!Number.isSafeInteger(source.bytes) || (source.bytes as number) < 1 || (source.bytes as number) > MAX_ENTRY_BYTES) {
     throw new TypeError(`${subject}.bytes is outside the accepted range`)
   }
-  if (schemaVersion === 2 && source.purpose !== 'backdrop' && source.purpose !== 'preview' && source.purpose !== 'component') {
+  if (source.purpose !== 'backdrop' && source.purpose !== 'preview' && source.purpose !== 'component') {
     throw new TypeError(`${subject}.purpose is unsupported`)
   }
   return Object.freeze({
@@ -268,18 +298,24 @@ function parseAsset(value: unknown, index: number, schemaVersion: 1 | 2): SkinAs
     mimeType: source.mimeType,
     sha256: source.sha256,
     bytes: source.bytes as number,
-    ...(schemaVersion === 2 ? { purpose: source.purpose as NonNullable<SkinAssetManifest['purpose']> } : {}),
+    purpose: source.purpose,
   })
 }
 
-function parseThemeJson(value: unknown): ThemeLayerDefinition {
+function parseThemeJson(value: unknown): ThemeLayerV2 {
   const source = object(value, 'theme.json')
   exactKeys(source, ['schemaVersion', 'tokens', 'backdrop', 'partStyles'], 'theme.json')
-  if (source.schemaVersion !== SKIN_SCHEMA_VERSION) throw new TypeError(`theme.json.schemaVersion must be ${String(SKIN_SCHEMA_VERSION)}`)
+  if (source.schemaVersion !== THEME_SCHEMA_VERSION) {
+    throw new SkinArchiveError(
+      'UNSUPPORTED_PROTOCOL',
+      `theme.json.schemaVersion must be ${String(THEME_SCHEMA_VERSION)}`,
+      'theme.json.schemaVersion',
+    )
+  }
   return {
-    tokens: object(source.tokens, 'theme.json.tokens') as ThemeLayerDefinition['tokens'],
-    ...(source.backdrop === undefined ? {} : { backdrop: source.backdrop as NonNullable<ThemeLayerDefinition['backdrop']> }),
-    ...(source.partStyles === undefined ? {} : { partStyles: source.partStyles as NonNullable<ThemeLayerDefinition['partStyles']> }),
+    tokens: object(source.tokens, 'theme.json.tokens') as ThemeLayerV2['tokens'],
+    ...(source.backdrop === undefined ? {} : { backdrop: source.backdrop as NonNullable<ThemeLayerV2['backdrop']> }),
+    ...(source.partStyles === undefined ? {} : { partStyles: source.partStyles as NonNullable<ThemeLayerV2['partStyles']> }),
   }
 }
 
@@ -289,15 +325,19 @@ function validateAssets(assets: readonly SkinAssetManifest[], entries: Record<st
   if (unexpected !== undefined) throw new TypeError(`skin archive asset ${JSON.stringify(unexpected)} is not declared`)
   for (const asset of assets) {
     const bytes = entries[asset.path]
-    if (bytes === undefined) throw new TypeError(`skin archive is missing declared asset ${JSON.stringify(asset.path)}`)
-    if (bytes.byteLength !== asset.bytes) throw new TypeError(`skin asset ${JSON.stringify(asset.path)} byte length does not match its manifest`)
-    if (createHash('sha256').update(bytes).digest('hex') !== asset.sha256) throw new TypeError(`skin asset ${JSON.stringify(asset.path)} hash does not match its manifest`)
-    if (!matchesImageSignature(bytes, asset.mimeType)) throw new TypeError(`skin asset ${JSON.stringify(asset.path)} does not match ${asset.mimeType}`)
+    if (bytes === undefined) throw new SkinArchiveError('INVALID_ASSET', `skin archive is missing declared asset ${JSON.stringify(asset.path)}`, asset.path)
+    if (bytes.byteLength !== asset.bytes) throw new SkinArchiveError('INVALID_ASSET', `skin asset ${JSON.stringify(asset.path)} byte length does not match its manifest`, asset.path)
+    if (createHash('sha256').update(bytes).digest('hex') !== asset.sha256) {
+      throw new SkinArchiveError('INVALID_ASSET', `skin asset ${JSON.stringify(asset.path)} hash does not match its manifest`, asset.path)
+    }
+    if (!matchesImageSignature(bytes, asset.mimeType)) {
+      throw new SkinArchiveError('INVALID_ASSET', `skin asset ${JSON.stringify(asset.path)} does not match ${asset.mimeType}`, asset.path)
+    }
   }
 }
 
-function validateExperience(manifest: SkinManifest, entries: Record<string, Uint8Array>): void {
-  if (manifest.schemaVersion === SKIN_SCHEMA_VERSION || manifest.experience === undefined) {
+function validateExperience(manifest: SkinManifestV3, entries: Record<string, Uint8Array>): void {
+  if (manifest.experience === undefined) {
     if (entries[EXPERIENCE_ENTRY] !== undefined) throw new TypeError('skin archive contains an undeclared experience bundle')
     return
   }
@@ -322,21 +362,21 @@ function matchesImageSignature(bytes: Uint8Array, mimeType: SkinAssetManifest['m
   return bytes.length >= 12 && new TextDecoder().decode(bytes.slice(0, 4)) === 'RIFF' && new TextDecoder().decode(bytes.slice(8, 12)) === 'WEBP'
 }
 
-function validateCapabilities(manifest: SkinManifest, layer: ThemeLayerDefinition): void {
+function validateCapabilities(manifest: SkinManifestV3, layer: ThemeLayerV2): void {
   const declared = new Set(manifest.capabilities)
   if (Object.keys(layer.tokens).length > 0 && !declared.has('tokens')) throw new TypeError('manifest.json must declare the tokens capability')
   if (layer.backdrop !== undefined && !declared.has('backdrop')) throw new TypeError('manifest.json must declare the backdrop capability')
   if ((layer.partStyles?.length ?? 0) > 0 && !declared.has('component-parts')) throw new TypeError('manifest.json must declare the component-parts capability')
-  const experience = manifest.schemaVersion === SKIN_SCHEMA_VERSION_V2 ? manifest.experience : undefined
+  const experience = manifest.experience
   if (experience !== undefined && !declared.has('component-experience')) throw new TypeError('manifest.json must declare the component-experience capability')
   if (experience === undefined && declared.has('component-experience')) throw new TypeError('manifest.json declares component-experience without an experience bundle')
 }
 
 function rewriteAssetReferences(
-  layer: ThemeLayerDefinition,
-  manifest: SkinManifest,
+  layer: ThemeLayerV2,
+  manifest: SkinManifestV3,
   fingerprint: string,
-): ThemeLayerDefinition {
+): ThemeLayerV2 {
   const assets = new Map(manifest.assets.map(asset => [asset.path, asset]))
   const referenced = new Set<string>()
   const rewrite = (mode: ThemeBackdropMode): ThemeBackdropMode => {
@@ -344,7 +384,7 @@ function rewriteAssetReferences(
     const path = assetReference(mode.assetUrl, 'theme.json backdrop assetUrl')
     const asset = assets.get(path)
     if (asset === undefined) throw new TypeError(`theme.json references undeclared asset ${JSON.stringify(path)}`)
-    if (manifest.schemaVersion === SKIN_SCHEMA_VERSION_V2 && asset.purpose !== 'backdrop') {
+    if (asset.purpose !== 'backdrop') {
       throw new TypeError(`theme.json backdrop asset ${JSON.stringify(path)} must have purpose backdrop`)
     }
     referenced.add(path)
@@ -354,20 +394,37 @@ function rewriteAssetReferences(
     light: rewrite(layer.backdrop.light),
     dark: rewrite(layer.backdrop.dark),
   }
-  if (manifest.schemaVersion === SKIN_SCHEMA_VERSION) {
-    const unused = manifest.assets.find(asset => !referenced.has(asset.path))
-    if (unused !== undefined) throw new TypeError(`manifest.json declares unreferenced asset ${JSON.stringify(unused.path)}`)
-  } else {
-    validatePurposeReferences(manifest, referenced)
+  const rewriteSurfaceImage = (image: ThemeSurfaceImage): ThemeSurfaceImage => {
+    const path = assetReference(image.assetUrl, 'theme.json component surface assetUrl')
+    const asset = assets.get(path)
+    if (asset === undefined) throw new TypeError(`theme.json references undeclared asset ${JSON.stringify(path)}`)
+    if (asset.purpose !== 'component') {
+      throw new TypeError(`theme.json component surface asset ${JSON.stringify(path)} must have purpose component`)
+    }
+    return { ...image, assetUrl: assetUrl(fingerprint, path) }
   }
-  return backdrop === undefined ? layer : { ...layer, backdrop }
+  const partStyles = layer.partStyles?.map(rule => ({
+    ...rule,
+    style: {
+      light: rule.style.light.surfaceImage === undefined
+        ? rule.style.light
+        : { ...rule.style.light, surfaceImage: rewriteSurfaceImage(rule.style.light.surfaceImage) },
+      dark: rule.style.dark.surfaceImage === undefined
+        ? rule.style.dark
+        : { ...rule.style.dark, surfaceImage: rewriteSurfaceImage(rule.style.dark.surfaceImage) },
+    },
+  }))
+  validatePurposeReferences(manifest, referenced)
+  return { ...layer, ...(backdrop === undefined ? {} : { backdrop }), ...(partStyles === undefined ? {} : { partStyles }) }
 }
 
-function validatePurposeReferences(manifest: SkinManifestV2, backdropReferences: ReadonlySet<string>): void {
-  const previewReferences = new Set([
-    assetReference(manifest.preview.light, 'manifest.json.preview.light'),
-    assetReference(manifest.preview.dark, 'manifest.json.preview.dark'),
-  ])
+function validatePurposeReferences(manifest: SkinManifestV3, backdropReferences: ReadonlySet<string>): void {
+  const previewReferences = manifest.preview === undefined
+    ? new Set<string>()
+    : new Set([
+        assetReference(manifest.preview.light, 'manifest.json.preview.light'),
+        assetReference(manifest.preview.dark, 'manifest.json.preview.dark'),
+      ])
   for (const asset of manifest.assets) {
     if (asset.purpose === 'backdrop' && !backdropReferences.has(asset.path)) {
       throw new TypeError(`manifest.json declares unreferenced backdrop asset ${JSON.stringify(asset.path)}`)
@@ -386,23 +443,22 @@ function validatePurposeReferences(manifest: SkinManifestV2, backdropReferences:
 }
 
 function presentationFields(
-  manifest: SkinManifest,
+  manifest: SkinManifestV3,
   fingerprint: string,
 ): { preview?: SkinPreviewUrls; experience?: SkinExperienceDescriptor } {
-  if (manifest.schemaVersion === SKIN_SCHEMA_VERSION) return {}
-  const preview = Object.freeze({
+  const preview = manifest.preview === undefined ? undefined : Object.freeze({
     light: assetUrl(fingerprint, assetReference(manifest.preview.light, 'manifest.json.preview.light')),
     dark: assetUrl(fingerprint, assetReference(manifest.preview.dark, 'manifest.json.preview.dark')),
   })
-  if (manifest.experience === undefined) return { preview }
+  if (manifest.experience === undefined) return preview === undefined ? {} : { preview }
   const assets = Object.freeze(Object.fromEntries(manifest.assets
     .map(asset => [asset.path.slice('assets/'.length), assetUrl(fingerprint, asset.path)])))
   return {
-    preview,
+    ...(preview === undefined ? {} : { preview }),
     experience: Object.freeze({
       apiVersion: 1,
       moduleId: manifest.experience.moduleId,
-      url: `/api/dsh-skin/experience/${fingerprint}/client.js?rev=${manifest.experience.sha256}`,
+      url: `/api/dsh-skin/experience/${fingerprint}/client.js`,
       rev: manifest.experience.sha256,
       placements: manifest.experience.placements,
       assets,

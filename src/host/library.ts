@@ -8,11 +8,12 @@ import {
 } from './archive.ts'
 import type {
   CommitSkinResult, PrepareSkinResult, SkinExperienceDescriptor, SkinHostState,
-  SkinSource, StoredSkinSummary, ThemeLayerDefinition,
+  SkinDraftDescriptor, SkinSource, StoredSkinSummary, ThemeLayerV2,
 } from '../shared/contracts.ts'
 
 const FINGERPRINT = /^[a-f0-9]{64}$/
 const PREPARATION_TTL_MS = 60_000
+const STATE_FILE = 'state-v3.json'
 
 interface DurableState {
   active?: string
@@ -91,7 +92,7 @@ export class SkinLibrary {
   }
 
   /** Synchronous first-paint source registered with Harness Theme Boot. */
-  activeBoot(): { activationRevision: number; contentFingerprint: string; layer: ThemeLayerDefinition } | undefined {
+  activeBoot(): { activationRevision: number; contentFingerprint: string; layer: ThemeLayerV2 } | undefined {
     const active = this.activeArchive()
     if (active === undefined) return undefined
     return {
@@ -99,11 +100,6 @@ export class SkinLibrary {
       contentFingerprint: active.fingerprint,
       layer: active.layer,
     }
-  }
-
-  /** Active experience descriptor used to preload its same-origin bundle in index.html. */
-  activeExperience(): SkinExperienceDescriptor | undefined {
-    return this.activeArchive()?.experience
   }
 
   /** Validate and atomically add one content-addressed local .dshskin archive. */
@@ -218,15 +214,22 @@ export class SkinLibrary {
   experience(fingerprint: string): { bytes: Uint8Array; descriptor: SkinExperienceDescriptor } {
     const skin = this.requireSkin(fingerprint).archive
     const descriptor = skin.experience
-    const entry = skin.manifest.schemaVersion === 2 ? skin.manifest.experience?.entry : undefined
+    const entry = skin.manifest.experience?.entry
     const bytes = entry === undefined ? undefined : skin.files.get(entry)
     if (descriptor === undefined || bytes === undefined) throw new TypeError('skin experience does not exist')
     return { bytes, descriptor }
   }
 
-  /** Read one validated layer for a read-only preview request. */
-  layer(fingerprint: string): ThemeLayerDefinition {
-    return this.requireSkin(fingerprint).archive.layer
+  /** Read the complete validated authoring descriptor without exposing arbitrary stored files. */
+  draft(fingerprint: string): SkinDraftDescriptor {
+    const skin = this.requireSkin(fingerprint)
+    return Object.freeze({
+      fingerprint,
+      source: skin.source,
+      manifest: skin.archive.manifest,
+      layer: skin.archive.layer,
+      ...(skin.archive.experience === undefined ? {} : { experience: skin.archive.experience }),
+    })
   }
 
   private activeArchive(): ParsedSkinArchive | undefined {
@@ -292,7 +295,7 @@ export class SkinLibrary {
   }
 
   private async writeState(state: DurableState): Promise<void> {
-    const target = join(this.root, 'state.json')
+    const target = join(this.root, STATE_FILE)
     const staging = join(this.root, `.state-${randomUUID()}.tmp`)
     await writeFile(staging, `${JSON.stringify(state, null, 2)}\n`, { flag: 'wx' })
     try {
@@ -327,13 +330,12 @@ function summary(skin: ParsedSkinArchive, source: SkinSource): StoredSkinSummary
     version: manifest.version,
     capabilities: manifest.capabilities,
     source,
-    ...(manifest.schemaVersion === 1 ? { tags: Object.freeze([]) } : {
-      ...(manifest.author === undefined ? {} : { author: manifest.author }),
-      ...(manifest.description === undefined ? {} : { description: manifest.description }),
-      tags: manifest.tags ?? Object.freeze([]),
-      ...(skin.preview === undefined ? {} : { preview: skin.preview }),
-      ...(skin.experience === undefined ? {} : { experience: skin.experience }),
-    }),
+    ...(manifest.author === undefined ? {} : { author: manifest.author }),
+    ...(manifest.description === undefined ? {} : { description: manifest.description }),
+    tags: manifest.tags,
+    parts: Object.freeze([...new Set(skin.layer.partStyles?.map(rule => rule.part) ?? [])]),
+    ...(skin.preview === undefined ? {} : { preview: skin.preview }),
+    ...(skin.experience === undefined ? {} : { experience: skin.experience }),
   })
 }
 
@@ -361,7 +363,7 @@ async function readStoredSkin(directory: string): Promise<ParsedSkinArchive> {
 
 async function readDurableState(root: string, warn: (error: unknown) => void): Promise<DurableState> {
   try {
-    const value = JSON.parse(await readFile(join(root, 'state.json'), 'utf8')) as unknown
+    const value = JSON.parse(await readFile(join(root, STATE_FILE), 'utf8')) as unknown
     if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new TypeError('skin state must be an object')
     const source = value as Record<string, unknown>
     const active = source.active
