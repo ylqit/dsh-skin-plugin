@@ -62,7 +62,13 @@ function usePlacementMounts(active: ActiveSkinExperience | undefined): Partial<R
         if (target === null) continue
         const mount = document.createElement('div')
         mount.dataset.dshSkinExperienceMount = placement
-        mount.className = css.portal!
+        mount.className = placement === 'skin.sidebar.brand'
+          ? `${css.portal!} ${css.sidebarBrand!}`
+          : css.portal!
+        mount.style.flex = '0 0 auto'
+        mount.style.minWidth = '0'
+        mount.style.maxWidth = '100%'
+        mount.style.overflow = 'hidden'
         if (PORTAL_TARGETS[placement]!.prepend) target.prepend(mount)
         else target.append(mount)
         owned.set(placement, mount)

@@ -121,17 +121,17 @@ function stampStructure(registry: StampedRegistry): void {
   if (frame !== undefined) {
     const columns = [...frame.children].filter(child => !(child instanceof HTMLElement)
       || (!child.hasAttribute('data-shell-overlay') && !child.hasAttribute('data-side')))
-    stamp(registry, columns[0], 'shell.sidebar')
+    const sidebarRoot = columns[0]?.querySelector(':scope > [data-slot="sidebar"] > *')
+    stamp(registry, sidebarRoot, 'shell.sidebar')
     stamp(registry, columns[1], 'shell.main')
     stamp(registry, columns[2], 'shell.details')
     const center = columns[1]
     if (center !== undefined) {
-      stamp(registry, center.firstElementChild, 'conversation.root')
       stampComposer(center, (element, part) => { stamp(registry, element, part) })
     }
   }
 
-  const conversation = document.querySelector('[data-phase]')
+  const conversation = document.querySelector('[data-slot="conversation"] > [data-phase]')
   stamp(registry, conversation, 'conversation.root')
   stamp(registry, document.querySelector('[data-conversation-scroll]'), 'conversation.scroller')
   stamp(registry, document.querySelector('[data-composer-seat]'), 'conversation.composer')
@@ -225,17 +225,17 @@ function pruneDisconnected(registry: StampedRegistry): void {
  */
 function syncBackdropSurfaces(registry: StampedRegistry): void {
   const surfaces: HTMLElement[] = []
-  const root = document.querySelector(ROOT_SELECTOR)
-  if (root?.firstElementChild instanceof HTMLElement) surfaces.push(root.firstElementChild)
   const overlay = document.querySelector(OVERLAY_SELECTOR)
   const frame = overlay?.parentElement
   if (frame instanceof HTMLElement) {
     surfaces.push(frame)
-    // Content surfaces painted opaque below the frame (conversation/details
-    // view roots). data-slot is the stable slots-framework marker.
-    for (const slot of frame.querySelectorAll('[data-slot="conversation"], [data-slot="details"]')) {
-      if (slot.firstElementChild instanceof HTMLElement) surfaces.push(slot.firstElementChild)
-    }
+    // Slot anchors are display:contents and Experience portals can add
+    // children. Select the DSH-owned painted roots by their semantic DOM
+    // contracts instead of by child position.
+    const conversation = frame.querySelector('[data-slot="conversation"] > [data-phase]')
+    if (conversation instanceof HTMLElement) surfaces.push(conversation)
+    const details = frame.querySelector('[data-slot="details"] > :not([data-dsh-skin-experience-mount])')
+    if (details instanceof HTMLElement) surfaces.push(details)
   }
   if (!document.body.hasAttribute(BACKDROP_FLAG)) {
     restoreSurfaces(registry)

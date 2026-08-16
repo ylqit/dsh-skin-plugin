@@ -9,10 +9,19 @@ function buildShellFixture(): void {
   document.body.innerHTML = ''
   const root = document.createElement('div')
   root.id = 'root'
-  const wrapper = document.createElement('div')
+  const rootSlot = document.createElement('div')
+  rootSlot.setAttribute('data-slot', 'root')
+  rootSlot.style.display = 'contents'
   const frame = document.createElement('div')
   frame.style.gridTemplateColumns = '256px minmax(0, 1fr) 0px'
-  const sidebar = document.createElement('div')
+  const sidebarColumn = document.createElement('div')
+  const sidebarSlot = document.createElement('div')
+  sidebarSlot.setAttribute('data-slot', 'sidebar')
+  sidebarSlot.style.display = 'contents'
+  const sidebarRoot = document.createElement('div')
+  sidebarRoot.setAttribute('data-testid', 'sidebar-root')
+  sidebarSlot.append(sidebarRoot)
+  sidebarColumn.append(sidebarSlot)
   const center = document.createElement('div')
   const details = document.createElement('div')
   const overlay = document.createElement('div')
@@ -21,6 +30,7 @@ function buildShellFixture(): void {
   conversationSlot.setAttribute('data-slot', 'conversation')
   conversationSlot.style.display = 'contents'
   const conversation = document.createElement('div')
+  conversation.setAttribute('data-phase', 'hero')
   const composer = document.createElement('div')
   const textarea = document.createElement('textarea')
   const toolbarButton = document.createElement('button')
@@ -30,9 +40,9 @@ function buildShellFixture(): void {
   center.append(conversationSlot)
   const standaloneButton = document.createElement('button')
   center.append(standaloneButton)
-  frame.append(sidebar, center, details, overlay)
-  wrapper.append(frame)
-  root.append(wrapper)
+  frame.append(sidebarColumn, center, details, overlay)
+  rootSlot.append(frame)
+  root.append(rootSlot)
   document.body.append(root)
 }
 
@@ -54,12 +64,19 @@ describe('part anchor shim', () => {
 
     const frame = document.querySelector('[data-shell-overlay]')?.parentElement
     expect(frame).toBeDefined()
-    const [sidebar, center, details] = [...(frame as HTMLElement).children] as [Element, Element, Element]
+    const [sidebarColumn, center, details] = [...(frame as HTMLElement).children] as [Element, Element, Element]
+    const sidebarSlot = sidebarColumn.querySelector('[data-slot="sidebar"]')
+    const sidebarRoot = sidebarSlot?.firstElementChild
+    const conversationSlot = center.querySelector('[data-slot="conversation"]')
+    const conversationRoot = conversationSlot?.querySelector(':scope > [data-phase]')
     expect(document.body.getAttribute(PART)).toBe('app.root')
-    expect(sidebar.getAttribute(PART)).toBe('shell.sidebar')
+    expect(sidebarRoot?.getAttribute(PART)).toBe('shell.sidebar')
+    expect(sidebarColumn.getAttribute(PART)).toBeNull()
+    expect(sidebarSlot?.getAttribute(PART)).toBeNull()
     expect(center.getAttribute(PART)).toBe('shell.main')
     expect(details.getAttribute(PART)).toBe('shell.details')
-    expect(center.firstElementChild?.getAttribute(PART)).toBe('conversation.root')
+    expect(conversationRoot?.getAttribute(PART)).toBe('conversation.root')
+    expect(conversationSlot?.getAttribute(PART)).toBeNull()
     expect(document.querySelector('textarea')?.parentElement?.getAttribute(PART)).toBe('conversation.composer')
     for (const button of document.querySelectorAll('button')) {
       expect(button.getAttribute(PART)).toBe('primitive.button')
@@ -98,12 +115,15 @@ describe('part anchor shim', () => {
 
   it('maps current DSH semantic markers to component Parts, variants, and states', async () => {
     document.body.innerHTML = `
-      <div data-phase="session">
-        <header>Conversation</header>
-        <div data-conversation-scroll>
-          <div data-chat-anchor-key="m1" data-chat-flow-kind="user-message"><div>hello</div></div>
-          <div data-composer-seat><textarea></textarea><button>send</button></div>
-          <div data-variant="others" data-state="running">tool</div>
+      <textarea id="input-phase" data-phase="inert"></textarea>
+      <div data-slot="conversation" style="display: contents">
+        <div data-phase="session">
+          <header>Conversation</header>
+          <div data-conversation-scroll>
+            <div data-chat-anchor-key="m1" data-chat-flow-kind="user-message"><div>hello</div></div>
+            <div data-composer-seat><textarea></textarea><button>send</button></div>
+            <div data-variant="others" data-state="running">tool</div>
+          </div>
         </div>
       </div>
       <div role="presentation">
@@ -116,7 +136,9 @@ describe('part anchor shim', () => {
     dispose = startPartStamper()
     await tick()
 
-    expect(document.querySelector('[data-phase]')?.getAttribute(PART)).toBe('conversation.root')
+    expect(document.querySelector('[data-slot="conversation"] > [data-phase]')?.getAttribute(PART)).toBe('conversation.root')
+    expect(document.querySelector('[data-slot="conversation"]')?.getAttribute(PART)).toBeNull()
+    expect(document.querySelector('#input-phase')?.getAttribute(PART)).toBe('primitive.input')
     expect(document.querySelector('header')?.getAttribute(PART)).toBe('conversation.header')
     expect(document.querySelector('[data-conversation-scroll]')?.getAttribute(PART)).toBe('conversation.scroller')
     expect(document.querySelector('[data-composer-seat]')?.getAttribute(PART)).toBe('conversation.composer')
@@ -180,60 +202,82 @@ describe('part anchor shim', () => {
 
   it('clears the opaque shell surfaces while a backdrop is active and restores them after', async () => {
     buildShellFixture()
-    const wrapper = document.querySelector<HTMLElement>('#root > *') as HTMLElement
+    const rootSlot = document.querySelector<HTMLElement>('#root > [data-slot="root"]') as HTMLElement
     const frame = document.querySelector<HTMLElement>('[data-shell-overlay]')?.parentElement as HTMLElement
     const conversationRoot = document.querySelector<HTMLElement>('[data-slot="conversation"] > *') as HTMLElement
-    wrapper.style.background = 'var(--dsw-alias-bg-base)'
+    rootSlot.style.background = 'var(--dsw-alias-bg-base)'
     frame.style.background = 'var(--dsw-alias-bg-base)'
     conversationRoot.style.background = 'var(--dsw-alias-bg-base)'
     dispose = startPartStamper()
     await tick()
 
     // No backdrop flag yet: surfaces keep their own background.
-    expect(wrapper.style.background).toBe('var(--dsw-alias-bg-base)')
+    expect(rootSlot.style.background).toBe('var(--dsw-alias-bg-base)')
     expect(frame.style.background).toBe('var(--dsw-alias-bg-base)')
     expect(conversationRoot.style.background).toBe('var(--dsw-alias-bg-base)')
 
     document.body.setAttribute('data-dsh-skin-backdrop', '1')
     await tick(20)
-    expect(wrapper.style.background).toBe('transparent')
+    expect(rootSlot.style.background).toBe('var(--dsw-alias-bg-base)')
     expect(frame.style.background).toBe('transparent')
     expect(conversationRoot.style.background).toBe('transparent')
 
     document.body.removeAttribute('data-dsh-skin-backdrop')
     await tick(20)
-    expect(wrapper.style.background).toBe('var(--dsw-alias-bg-base)')
+    expect(rootSlot.style.background).toBe('var(--dsw-alias-bg-base)')
     expect(frame.style.background).toBe('var(--dsw-alias-bg-base)')
     expect(conversationRoot.style.background).toBe('var(--dsw-alias-bg-base)')
   })
 
   it('restores surface backgrounds on dispose while a backdrop is active', async () => {
     buildShellFixture()
-    const wrapper = document.querySelector<HTMLElement>('#root > *') as HTMLElement
-    wrapper.style.background = 'var(--dsw-alias-bg-base)'
+    const frame = document.querySelector<HTMLElement>('[data-shell-overlay]')?.parentElement as HTMLElement
+    frame.style.background = 'var(--dsw-alias-bg-base)'
     document.body.setAttribute('data-dsh-skin-backdrop', '1')
     dispose = startPartStamper()
     await tick()
-    expect(wrapper.style.background).toBe('transparent')
+    expect(frame.style.background).toBe('transparent')
     dispose()
     dispose = undefined
-    expect(wrapper.style.background).toBe('var(--dsw-alias-bg-base)')
+    expect(frame.style.background).toBe('var(--dsw-alias-bg-base)')
     expect(document.body.hasAttribute('data-dsh-skin-backdrop')).toBe(true) // flag owned by presenter, not shim
   })
 
   it('does not overwrite a later DSH background write when retracting backdrop transparency', async () => {
     buildShellFixture()
-    const wrapper = document.querySelector<HTMLElement>('#root > *') as HTMLElement
-    wrapper.style.background = 'var(--dsw-alias-bg-base)'
+    const frame = document.querySelector<HTMLElement>('[data-shell-overlay]')?.parentElement as HTMLElement
+    frame.style.background = 'var(--dsw-alias-bg-base)'
     document.body.setAttribute('data-dsh-skin-backdrop', '1')
     dispose = startPartStamper()
     await tick()
-    expect(wrapper.style.background).toBe('transparent')
+    expect(frame.style.background).toBe('transparent')
 
-    wrapper.style.background = 'rgb(1, 2, 3)'
+    frame.style.background = 'rgb(1, 2, 3)'
     document.body.removeAttribute('data-dsh-skin-backdrop')
     await tick(20)
 
-    expect(wrapper.style.background).toBe('rgb(1, 2, 3)')
+    expect(frame.style.background).toBe('rgb(1, 2, 3)')
+  })
+
+  it('keeps semantic conversation surfaces transparent when a portal precedes the DSH root', async () => {
+    buildShellFixture()
+    const slot = document.querySelector<HTMLElement>('[data-slot="conversation"]') as HTMLElement
+    const conversationRoot = slot.querySelector<HTMLElement>(':scope > [data-phase]') as HTMLElement
+    const portal = document.createElement('div')
+    portal.dataset.dshSkinExperienceMount = 'skin.conversation.hero'
+    portal.style.background = 'rgb(9, 9, 9)'
+    slot.prepend(portal)
+    conversationRoot.style.background = 'var(--dsw-alias-bg-base)'
+    document.body.setAttribute('data-dsh-skin-backdrop', '1')
+
+    dispose = startPartStamper()
+    await tick()
+
+    expect(conversationRoot.style.background).toBe('transparent')
+    expect(portal.style.background).toBe('rgb(9, 9, 9)')
+
+    document.body.removeAttribute('data-dsh-skin-backdrop')
+    await tick(20)
+    expect(conversationRoot.style.background).toBe('var(--dsw-alias-bg-base)')
   })
 })
