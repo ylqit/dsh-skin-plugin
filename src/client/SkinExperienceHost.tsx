@@ -44,6 +44,7 @@ export function SkinExperienceHost({ useExperience }: SkinExperienceHostInjected
 function usePlacementMounts(active: ActiveSkinExperience | undefined): Partial<Record<SkinPlacement, HTMLElement>> {
   const [mounts, setMounts] = useState<Partial<Record<SkinPlacement, HTMLElement>>>({})
   const placementKey = useMemo(() => active?.descriptor.placements.join('\n') ?? '', [active?.descriptor.placements])
+  const themeId = active?.themeId
   useEffect(() => {
     const owned = new Map<SkinPlacement, HTMLElement>()
     const placements = new Set(active?.descriptor.placements.filter(placement => PORTAL_TARGETS[placement] !== undefined) ?? [])
@@ -62,6 +63,7 @@ function usePlacementMounts(active: ActiveSkinExperience | undefined): Partial<R
         if (target === null) continue
         const mount = document.createElement('div')
         mount.dataset.dshSkinExperienceMount = placement
+        if (themeId !== undefined) mount.dataset.dshSkinExperienceTheme = themeId
         mount.className = placement === 'skin.sidebar.brand'
           ? `${css.portal!} ${css.sidebarBrand!}`
           : css.portal!
@@ -78,13 +80,18 @@ function usePlacementMounts(active: ActiveSkinExperience | undefined): Partial<R
     }
     reconcile()
     const observer = new MutationObserver(reconcile)
-    observer.observe(document.body, { childList: true, subtree: true })
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-dsh-theme-part'],
+    })
     return () => {
       observer.disconnect()
       for (const mount of owned.values()) mount.remove()
       setMounts({})
     }
-  }, [placementKey])
+  }, [placementKey, themeId])
   return mounts
 }
 

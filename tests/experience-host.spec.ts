@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { createElement, useSyncExternalStore } from 'react'
+import { act, createElement, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
-import { act } from 'react-dom/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SkinExperienceHost } from '../src/client/SkinExperienceHost.tsx'
 import { SkinExperienceRuntime } from '../src/client/experience-runtime.ts'
+import { startPartStamper } from '../src/client/part-stamper.ts'
 import type { SkinExperienceDescriptor } from '../src/shared/contracts.ts'
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const tick = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
 
 afterEach(() => {
   document.body.replaceChildren()
@@ -16,7 +20,12 @@ afterEach(() => {
 
 describe('SkinExperienceHost', () => {
   it('portals owned decorations into current Part anchors and removes every mount on clear', async () => {
-    const SidebarBrand = (): ReturnType<typeof createElement> => createElement('strong', null, 'leaf brand')
+    const SidebarBrand = (): ReturnType<typeof createElement> => createElement(
+      'div',
+      null,
+      createElement('i'),
+      createElement('div', null, 'leaf brand'),
+    )
     const runtime = new SkinExperienceRuntime({
       version: 'client',
       import: async () => ({
@@ -49,22 +58,37 @@ describe('SkinExperienceHost', () => {
 
     await act(async () => {
       root.render(createElement(SkinExperienceHost, { useExperience }))
-      await runtime.install(descriptor, 'bulbasaur')
+      await runtime.install(descriptor, 'custom-brand')
     })
     const mount = sidebarRoot.querySelector<HTMLElement>('[data-dsh-skin-experience-mount="skin.sidebar.brand"]')
     expect(mount?.textContent).toBe('leaf brand')
     expect(mount?.parentElement).toBe(sidebarRoot)
     expect(sidebarSlot.children).toHaveLength(1)
+    const mountTheme = mount?.dataset.dshSkinExperienceTheme
+    const matchesBulbasaur = mount?.matches('[data-dsh-skin-experience-theme="bulbasaur-growth"]')
     const mountStyle = {
       flex: mount?.style.flex,
       minWidth: mount?.style.minWidth,
       maxWidth: mount?.style.maxWidth,
       overflow: mount?.style.overflow,
     }
+    const bulbasaurDescriptor: SkinExperienceDescriptor = {
+      ...descriptor,
+      moduleId: 'bulbasaur-brand',
+      url: `/api/dsh-skin/experience/${'e'.repeat(64)}.js`,
+      rev: 'e'.repeat(64),
+    }
+    await act(async () => { await runtime.install(bulbasaurDescriptor, 'bulbasaur-growth') })
+    const updatedMountTheme = sidebarRoot.querySelector<HTMLElement>(
+      '[data-dsh-skin-experience-mount="skin.sidebar.brand"]',
+    )?.dataset.dshSkinExperienceTheme
 
     await act(async () => { runtime.clear() })
     expect(document.querySelector('[data-dsh-skin-experience-mount]')).toBeNull()
     await act(async () => { root.unmount() })
+    expect(mountTheme).toBe('custom-brand')
+    expect(matchesBulbasaur).toBe(false)
+    expect(updatedMountTheme).toBe('bulbasaur-growth')
     expect(mountStyle).toEqual({
       flex: '0 0 auto',
       minWidth: '0px',
@@ -160,11 +184,83 @@ describe('SkinExperienceHost', () => {
     await act(async () => { root.unmount() })
   })
 
-  it('degrades the sidebar placement to a 36px graphic in the collapsed rail', () => {
+  it('scopes the 36px collapsed treatment to the built-in Bulbasaur theme', () => {
     const source = readFileSync(resolve('src/client/SkinExperienceHost.module.css'), 'utf8')
-    expect(source).toMatch(/\.sidebarBrand\s*\{[^}]*container-type:\s*inline-size;/s)
+    expect(source).toMatch(/\.sidebarBrand\[data-dsh-skin-experience-theme=['"]bulbasaur-growth['"]\]\s*\{[^}]*container-type:\s*inline-size;/s)
     expect(source).toMatch(/@container\s*\(max-width:\s*48px\)/)
-    expect(source).toMatch(/\.sidebarBrand\s*>\s*\*\s*\{[^}]*width:\s*36px\s*!important;[^}]*max-width:\s*36px\s*!important;/s)
-    expect(source).toMatch(/\.sidebarBrand\s*>\s*\*\s*>\s*i[\s\S]*\.sidebarBrand\s*>\s*\*\s*>\s*div\s*\{[^}]*display:\s*none\s*!important;/s)
+    expect(source).toMatch(/\.sidebarBrand\[data-dsh-skin-experience-theme=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*\{[^}]*width:\s*36px\s*!important;[^}]*max-width:\s*36px\s*!important;/s)
+    expect(source).not.toMatch(/\.sidebarBrand\s*>\s*\*\s*>\s*(?:i|div)/)
+    expect(source).toMatch(/\.sidebarBrand\[data-dsh-skin-experience-theme=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*>\s*i[\s\S]*\.sidebarBrand\[data-dsh-skin-experience-theme=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*>\s*div\s*\{[^}]*display:\s*none\s*!important;/s)
+  })
+
+  it('remounts a portal after the part stamper labels a replaced DSH root', async () => {
+    const SidebarBrand = (): ReturnType<typeof createElement> => createElement('strong', null, 'resident brand')
+    const runtime = new SkinExperienceRuntime({
+      version: 'client',
+      import: async () => ({
+        apiVersion: 1,
+        components: { 'skin.sidebar.brand': SidebarBrand },
+      }),
+      invalidate: vi.fn(),
+    }, async () => {})
+    const descriptor: SkinExperienceDescriptor = {
+      apiVersion: 1,
+      moduleId: 'resident-brand',
+      url: `/api/dsh-skin/experience/${'d'.repeat(64)}.js`,
+      rev: 'd'.repeat(64),
+      placements: ['skin.sidebar.brand'],
+      assets: {},
+    }
+    const shellRoot = document.createElement('div')
+    shellRoot.id = 'root'
+    const rootSlot = document.createElement('div')
+    rootSlot.dataset.slot = 'root'
+    rootSlot.style.display = 'contents'
+    const frame = document.createElement('div')
+    const sidebarColumn = document.createElement('div')
+    const sidebarSlot = document.createElement('div')
+    sidebarSlot.dataset.slot = 'sidebar'
+    sidebarSlot.style.display = 'contents'
+    const sidebarRoot = document.createElement('div')
+    sidebarSlot.append(sidebarRoot)
+    sidebarColumn.append(sidebarSlot)
+    const center = document.createElement('div')
+    const details = document.createElement('div')
+    const overlay = document.createElement('div')
+    overlay.dataset.shellOverlay = ''
+    frame.append(sidebarColumn, center, details, overlay)
+    rootSlot.append(frame)
+    shellRoot.append(rootSlot)
+    const hostNode = document.createElement('div')
+    document.body.append(shellRoot, hostNode)
+    const disposeStamper = startPartStamper()
+    const root = createRoot(hostNode)
+    const useExperience = <T,>(selector: (state: ReturnType<typeof runtime.getSnapshot>) => T): T =>
+      selector(useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot))
+
+    let replacementPart: string | null = null
+    let replacementPortal: string | undefined
+    try {
+      await act(async () => {
+        root.render(createElement(SkinExperienceHost, { useExperience }))
+        await runtime.install(descriptor, 'resident-brand')
+      })
+      const replacement = document.createElement('div')
+      await act(async () => {
+        sidebarRoot.replaceWith(replacement)
+        await tick(40)
+      })
+      replacementPart = replacement.getAttribute('data-dsh-theme-part')
+      replacementPortal = replacement.querySelector<HTMLElement>(
+        '[data-dsh-skin-experience-mount="skin.sidebar.brand"]',
+      )?.textContent ?? undefined
+    } finally {
+      await act(async () => { runtime.clear() })
+      await act(async () => { root.unmount() })
+      disposeStamper()
+    }
+
+    expect(replacementPart).toBe('shell.sidebar')
+    expect(replacementPortal).toBe('resident brand')
   })
 })

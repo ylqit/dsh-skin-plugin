@@ -28,6 +28,9 @@
 
 .sidebarBrand {
   width: 100%;
+}
+
+.sidebarBrand[data-dsh-skin-experience-theme='bulbasaur-growth'] {
   container-type: inline-size;
 }
 
@@ -36,7 +39,7 @@
    graphic child so its explanatory copy and decorative mark cannot widen the
    56px track. Expanded sidebars stay above this container threshold. */
 @container (max-width: 48px) {
-  .sidebarBrand > * {
+  .sidebarBrand[data-dsh-skin-experience-theme='bulbasaur-growth'] > * {
     box-sizing: border-box !important;
     width: 36px !important;
     max-width: 36px !important;
@@ -48,8 +51,8 @@
     overflow: hidden !important;
   }
 
-  .sidebarBrand > * > i,
-  .sidebarBrand > * > div {
+  .sidebarBrand[data-dsh-skin-experience-theme='bulbasaur-growth'] > * > i,
+  .sidebarBrand[data-dsh-skin-experience-theme='bulbasaur-growth'] > * > div {
     display: none !important;
   }
 }

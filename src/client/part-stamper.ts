@@ -59,7 +59,12 @@ export function startPartStamper(): () => void {
   const pending = new Set<Element>()
   let structureDirty = false
   let backdropDirty = false
+  let disposed = false
+  let scheduled = false
+  let scheduledFrame: number | undefined
+  let scheduledTimer: ReturnType<typeof setTimeout> | undefined
   const observer = new MutationObserver((records) => {
+    if (disposed) return
     for (const record of records) {
       if (record.type === 'attributes') {
         backdropDirty = true
@@ -78,12 +83,14 @@ export function startPartStamper(): () => void {
     attributes: true,
     attributeFilter: [BACKDROP_FLAG],
   })
-  let scheduled = false
   function schedule(): void {
-    if (scheduled) return
+    if (disposed || scheduled) return
     scheduled = true
     const run = (): void => {
       scheduled = false
+      scheduledFrame = undefined
+      scheduledTimer = undefined
+      if (disposed) return
       pruneDisconnected(registry)
       for (const element of pending) stampSubtree(registry, element)
       pending.clear()
@@ -92,12 +99,24 @@ export function startPartStamper(): () => void {
       structureDirty = false
       backdropDirty = false
     }
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run)
-    else setTimeout(run, 16)
+    if (typeof requestAnimationFrame === 'function') scheduledFrame = requestAnimationFrame(run)
+    else scheduledTimer = setTimeout(run, 16)
   }
 
   return () => {
+    if (disposed) return
+    disposed = true
     observer.disconnect()
+    if (scheduledFrame !== undefined && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(scheduledFrame)
+    }
+    if (scheduledTimer !== undefined) clearTimeout(scheduledTimer)
+    scheduledFrame = undefined
+    scheduledTimer = undefined
+    scheduled = false
+    pending.clear()
+    structureDirty = false
+    backdropDirty = false
     backdrop.remove()
     if (root !== undefined && previousRootStyles !== undefined) {
       root.style.position = previousRootStyles.position
@@ -128,16 +147,15 @@ function stampStructure(registry: StampedRegistry): void {
     const center = columns[1]
     if (center !== undefined) {
       stampComposer(center, (element, part) => { stamp(registry, element, part) })
+      const conversation = center.querySelector('[data-slot="conversation"] > [data-phase]')
+      stamp(registry, conversation, 'conversation.root')
+      stamp(registry, conversation?.querySelector('[data-conversation-scroll]'), 'conversation.scroller')
+      stamp(registry, conversation?.querySelector('[data-composer-seat]'), 'conversation.composer')
+      if (conversation !== null) {
+        const header = [...conversation.children].find(child => !child.hasAttribute('data-conversation-scroll'))
+        stamp(registry, header, 'conversation.header')
+      }
     }
-  }
-
-  const conversation = document.querySelector('[data-slot="conversation"] > [data-phase]')
-  stamp(registry, conversation, 'conversation.root')
-  stamp(registry, document.querySelector('[data-conversation-scroll]'), 'conversation.scroller')
-  stamp(registry, document.querySelector('[data-composer-seat]'), 'conversation.composer')
-  if (conversation !== null) {
-    const header = [...conversation.children].find(child => !child.hasAttribute('data-conversation-scroll'))
-    stamp(registry, header, 'conversation.header')
   }
 }
 
@@ -207,13 +225,17 @@ function ownAttribute(registry: StampedRegistry, element: HTMLElement, name: str
 }
 
 function pruneDisconnected(registry: StampedRegistry): void {
+  for (const [element, previous] of [...registry.surfaces]) {
+    if (element.isConnected) continue
+    restoreSurface(element, previous)
+    registry.surfaces.delete(element)
+  }
   for (const [element, attributes] of [...registry.attributes]) {
     if (element.isConnected) continue
     for (const [name, value] of attributes) {
       if (element.getAttribute(name) === value) element.removeAttribute(name)
     }
     registry.attributes.delete(element)
-    registry.surfaces.delete(element)
   }
 }
 

@@ -31,11 +31,15 @@ function buildShellFixture(): void {
   conversationSlot.style.display = 'contents'
   const conversation = document.createElement('div')
   conversation.setAttribute('data-phase', 'hero')
+  const conversationScroll = document.createElement('div')
+  conversationScroll.setAttribute('data-conversation-scroll', '')
   const composer = document.createElement('div')
+  composer.setAttribute('data-composer-seat', '')
   const textarea = document.createElement('textarea')
   const toolbarButton = document.createElement('button')
   composer.append(textarea, toolbarButton)
-  conversation.append(composer)
+  conversationScroll.append(composer)
+  conversation.append(conversationScroll)
   conversationSlot.append(conversation)
   center.append(conversationSlot)
   const standaloneButton = document.createElement('button')
@@ -53,6 +57,7 @@ afterEach(() => {
   dispose?.()
   dispose = undefined
   document.body.innerHTML = ''
+  document.body.removeAttribute('data-dsh-skin-backdrop')
 })
 
 describe('part anchor shim', () => {
@@ -116,13 +121,24 @@ describe('part anchor shim', () => {
   it('maps current DSH semantic markers to component Parts, variants, and states', async () => {
     document.body.innerHTML = `
       <textarea id="input-phase" data-phase="inert"></textarea>
-      <div data-slot="conversation" style="display: contents">
-        <div data-phase="session">
-          <header>Conversation</header>
-          <div data-conversation-scroll>
-            <div data-chat-anchor-key="m1" data-chat-flow-kind="user-message"><div>hello</div></div>
-            <div data-composer-seat><textarea></textarea><button>send</button></div>
-            <div data-variant="others" data-state="running">tool</div>
+      <div id="root">
+        <div data-slot="root" style="display: contents">
+          <div>
+            <div></div>
+            <div>
+              <div data-slot="conversation" style="display: contents">
+                <div data-phase="session">
+                  <header>Conversation</header>
+                  <div data-conversation-scroll>
+                    <div data-chat-anchor-key="m1" data-chat-flow-kind="user-message"><div>hello</div></div>
+                    <div data-composer-seat><textarea></textarea><button>send</button></div>
+                    <div data-variant="others" data-state="running">tool</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div></div>
+            <div data-shell-overlay></div>
           </div>
         </div>
       </div>
@@ -198,6 +214,21 @@ describe('part anchor shim', () => {
     expect(document.querySelectorAll('button').length).toBeGreaterThan(0)
     expect(root?.style.position).toBe('')
     expect(root?.style.zIndex).toBe('')
+  })
+
+  it('does not stamp queued nodes after disposal', async () => {
+    buildShellFixture()
+    dispose = startPartStamper()
+    await tick()
+    const late = document.createElement('button')
+    document.body.append(late)
+    await tick()
+
+    dispose()
+    dispose = undefined
+    await tick(30)
+
+    expect(late.hasAttribute(PART)).toBe(false)
   })
 
   it('clears the opaque shell surfaces while a backdrop is active and restores them after', async () => {
@@ -279,5 +310,54 @@ describe('part anchor shim', () => {
     document.body.removeAttribute('data-dsh-skin-backdrop')
     await tick(20)
     expect(conversationRoot.style.background).toBe('var(--dsw-alias-bg-base)')
+  })
+
+  it('restores a detached surface before forgetting ownership and restores it again after reattach', async () => {
+    buildShellFixture()
+    const slot = document.querySelector<HTMLElement>('[data-slot="conversation"]') as HTMLElement
+    const conversationRoot = slot.querySelector<HTMLElement>(':scope > [data-phase]') as HTMLElement
+    conversationRoot.style.background = 'var(--dsw-alias-bg-base)'
+    document.body.setAttribute('data-dsh-skin-backdrop', '1')
+    dispose = startPartStamper()
+    await tick()
+
+    conversationRoot.remove()
+    await tick(20)
+    const detachedBackground = conversationRoot.style.background
+    slot.append(conversationRoot)
+    await tick(20)
+    const reattachedBackground = conversationRoot.style.background
+
+    dispose()
+    dispose = undefined
+    const disposedBackground = conversationRoot.style.background
+
+    expect(detachedBackground).toBe('var(--dsw-alias-bg-base)')
+    expect(reattachedBackground).toBe('transparent')
+    expect(disposedBackground).toBe('var(--dsw-alias-bg-base)')
+  })
+
+  it('ignores conversation marker decoys outside the resolved frame center', async () => {
+    buildShellFixture()
+    document.body.insertAdjacentHTML('afterbegin', `
+      <div id="decoy-conversation" data-slot="conversation">
+        <div data-phase="active">
+          <div data-conversation-scroll>
+            <div data-composer-seat><textarea></textarea><button>send</button></div>
+          </div>
+        </div>
+      </div>
+    `)
+    dispose = startPartStamper()
+    await tick()
+
+    const frame = document.querySelector('[data-shell-overlay]')?.parentElement as HTMLElement
+    const center = frame.children[1] as HTMLElement
+    expect(center.querySelector('[data-phase]')?.getAttribute(PART)).toBe('conversation.root')
+    expect(center.querySelector('[data-conversation-scroll]')?.getAttribute(PART)).toBe('conversation.scroller')
+    expect(center.querySelector('[data-composer-seat]')?.getAttribute(PART)).toBe('conversation.composer')
+    expect(document.querySelector('#decoy-conversation [data-phase]')?.getAttribute(PART)).toBeNull()
+    expect(document.querySelector('#decoy-conversation [data-conversation-scroll]')?.getAttribute(PART)).toBeNull()
+    expect(document.querySelector('#decoy-conversation [data-composer-seat]')?.getAttribute(PART)).toBeNull()
   })
 })
