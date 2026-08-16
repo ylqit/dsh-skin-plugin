@@ -5,9 +5,11 @@ import { act, createElement, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SkinExperienceHost } from '../src/client/SkinExperienceHost.tsx'
+import { SkinStudioController } from '../src/client/controller.ts'
 import { SkinExperienceRuntime } from '../src/client/experience-runtime.ts'
 import { startPartStamper } from '../src/client/part-stamper.ts'
-import type { SkinExperienceDescriptor } from '../src/shared/contracts.ts'
+import { parseSkinArchive } from '../src/host/archive.ts'
+import type { SkinExperienceDescriptor, SkinHostState } from '../src/shared/contracts.ts'
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -16,6 +18,7 @@ const tick = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
 afterEach(() => {
   document.body.replaceChildren()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('SkinExperienceHost', () => {
@@ -64,8 +67,8 @@ describe('SkinExperienceHost', () => {
     expect(mount?.textContent).toBe('leaf brand')
     expect(mount?.parentElement).toBe(sidebarRoot)
     expect(sidebarSlot.children).toHaveLength(1)
-    const mountTheme = mount?.dataset.dshSkinExperienceTheme
-    const matchesBulbasaur = mount?.matches('[data-dsh-skin-experience-theme="bulbasaur-growth"]')
+    const mountVariant = mount?.dataset.dshSkinExperienceVariant
+    const matchesBulbasaur = mount?.matches('[data-dsh-skin-experience-variant="bulbasaur-growth"]')
     const mountStyle = {
       flex: mount?.style.flex,
       minWidth: mount?.style.minWidth,
@@ -79,16 +82,16 @@ describe('SkinExperienceHost', () => {
       rev: 'e'.repeat(64),
     }
     await act(async () => { await runtime.install(bulbasaurDescriptor, 'bulbasaur-growth') })
-    const updatedMountTheme = sidebarRoot.querySelector<HTMLElement>(
+    const updatedMountVariant = sidebarRoot.querySelector<HTMLElement>(
       '[data-dsh-skin-experience-mount="skin.sidebar.brand"]',
-    )?.dataset.dshSkinExperienceTheme
+    )?.dataset.dshSkinExperienceVariant
 
     await act(async () => { runtime.clear() })
     expect(document.querySelector('[data-dsh-skin-experience-mount]')).toBeNull()
     await act(async () => { root.unmount() })
-    expect(mountTheme).toBe('custom-brand')
+    expect(mountVariant).toBeUndefined()
     expect(matchesBulbasaur).toBe(false)
-    expect(updatedMountTheme).toBe('bulbasaur-growth')
+    expect(updatedMountVariant).toBeUndefined()
     expect(mountStyle).toEqual({
       flex: '0 0 auto',
       minWidth: '0px',
@@ -186,11 +189,99 @@ describe('SkinExperienceHost', () => {
 
   it('scopes the 36px collapsed treatment to the built-in Bulbasaur theme', () => {
     const source = readFileSync(resolve('src/client/SkinExperienceHost.module.css'), 'utf8')
-    expect(source).toMatch(/\.sidebarBrand\[data-dsh-skin-experience-theme=['"]bulbasaur-growth['"]\]\s*\{[^}]*container-type:\s*inline-size;/s)
+    expect(source).toMatch(/\.sidebarBrand\[data-dsh-skin-experience-variant=['"]bulbasaur-growth['"]\]\s*\{[^}]*container-type:\s*inline-size;/s)
     expect(source).toMatch(/@container\s*\(max-width:\s*48px\)/)
-    expect(source).toMatch(/\.sidebarBrand\[data-dsh-skin-experience-theme=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*\{[^}]*width:\s*36px\s*!important;[^}]*max-width:\s*36px\s*!important;/s)
+    expect(source).toMatch(/\.sidebarBrand\[data-dsh-skin-experience-variant=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*\{[^}]*width:\s*36px\s*!important;[^}]*max-width:\s*36px\s*!important;/s)
     expect(source).not.toMatch(/\.sidebarBrand\s*>\s*\*\s*>\s*(?:i|div)/)
-    expect(source).toMatch(/\.sidebarBrand\[data-dsh-skin-experience-theme=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*>\s*i[\s\S]*\.sidebarBrand\[data-dsh-skin-experience-theme=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*>\s*div\s*\{[^}]*display:\s*none\s*!important;/s)
+    expect(source).toMatch(/\.sidebarBrand\[data-dsh-skin-experience-variant=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*>\s*i[\s\S]*\.sidebarBrand\[data-dsh-skin-experience-variant=['"]bulbasaur-growth['"]\]\s*>\s*\*\s*>\s*div\s*\{[^}]*display:\s*none\s*!important;/s)
+  })
+
+  it('recognizes the shipped Bulbasaur through the controller independently of its archive fingerprint', async () => {
+    const builtin = parseSkinArchive(new Uint8Array(readFileSync(resolve('builtins/bulbasaur-growth.dshskin'))))
+    const descriptor = builtin.experience as SkinExperienceDescriptor
+    const bundle = new TextDecoder().decode(builtin.files.get('experience/client.js'))
+    function LeafBrand(): ReturnType<typeof createElement> {
+      return createElement('div', null, createElement('i'), createElement('span', null, 'leaf'))
+    }
+    function GrowthHero(): ReturnType<typeof createElement> {
+      return createElement('div', null, 'growth')
+    }
+    const runtime = new SkinExperienceRuntime({
+      version: 'client',
+      import: async () => ({
+        apiVersion: 1,
+        components: {
+          'skin.sidebar.brand': LeafBrand,
+          'skin.conversation.hero': GrowthHero,
+        },
+      }),
+      invalidate: () => {},
+    }, async () => {})
+    const sidebarRoot = document.createElement('div')
+    sidebarRoot.dataset.dshThemePart = 'shell.sidebar'
+    const rootNode = document.createElement('div')
+    document.body.append(sidebarRoot, rootNode)
+    const root = createRoot(rootNode)
+    const useExperience = <T,>(selector: (state: ReturnType<typeof runtime.getSnapshot>) => T): T =>
+      selector(useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot))
+    const host: SkinHostState = {
+      activationRevision: 1,
+      activeFingerprint: builtin.fingerprint,
+      activeExperience: descriptor,
+      skins: [{
+        fingerprint: builtin.fingerprint,
+        id: builtin.manifest.id,
+        name: builtin.manifest.name,
+        version: builtin.manifest.version,
+        capabilities: builtin.manifest.capabilities,
+        source: 'builtin',
+        tags: builtin.manifest.tags ?? [],
+        parts: [],
+        experience: descriptor,
+      }],
+    }
+    vi.stubGlobal('EventSource', undefined)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, value: host }), {
+      headers: { 'Content-Type': 'application/json' },
+    })))
+    const controller = new SkinStudioController({
+      getTheme: () => ({ active: { colorScheme: 'light' } }),
+      setTheme: vi.fn(),
+    }, true, runtime)
+
+    let variant: string | undefined
+    let runtimeSkinId: string | undefined
+    let runtimeThemeId: string | undefined
+    let disposeController = (): void => {}
+    try {
+      await act(async () => {
+        root.render(createElement(SkinExperienceHost, { useExperience }))
+        disposeController = controller.start()
+        await vi.waitFor(() => {
+          runtimeSkinId = runtime.getSnapshot()?.skinId
+          runtimeThemeId = runtime.getSnapshot()?.themeId
+          expect(runtimeSkinId).toBe('bulbasaur-growth')
+        })
+      })
+      variant = sidebarRoot.querySelector<HTMLElement>(
+        '[data-dsh-skin-experience-mount="skin.sidebar.brand"]',
+      )?.dataset.dshSkinExperienceVariant
+    } finally {
+      await act(async () => {
+        disposeController()
+        root.unmount()
+      })
+    }
+
+    expect(builtin.manifest.id).toBe('bulbasaur-growth')
+    expect(builtin.fingerprint).toMatch(/^[a-f0-9]{64}$/)
+    expect(builtin.fingerprint).not.toBe('bulbasaur-growth')
+    expect(descriptor.moduleId).toMatch(/^dsh-skin:[0-9a-f-]{36}$/)
+    expect(bundle).toContain('function LeafBrand()')
+    expect(bundle).toContain('function GrowthHero(')
+    expect(runtimeThemeId).toBe(builtin.fingerprint)
+    expect(runtimeSkinId).toBe('bulbasaur-growth')
+    expect(variant).toBe('bulbasaur-growth')
   })
 
   it('remounts a portal after the part stamper labels a replaced DSH root', async () => {

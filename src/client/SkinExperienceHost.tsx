@@ -44,7 +44,11 @@ export function SkinExperienceHost({ useExperience }: SkinExperienceHostInjected
 function usePlacementMounts(active: ActiveSkinExperience | undefined): Partial<Record<SkinPlacement, HTMLElement>> {
   const [mounts, setMounts] = useState<Partial<Record<SkinPlacement, HTMLElement>>>({})
   const placementKey = useMemo(() => active?.descriptor.placements.join('\n') ?? '', [active?.descriptor.placements])
-  const themeId = active?.themeId
+  const moduleId = active?.descriptor.moduleId
+  const revision = active?.descriptor.rev
+  // The controller resolves this stable manifest id before fingerprints and
+  // generated module UUIDs cross into the Experience runtime.
+  const sidebarBrandVariant = active?.skinId === 'bulbasaur-growth' ? 'bulbasaur-growth' : undefined
   useEffect(() => {
     const owned = new Map<SkinPlacement, HTMLElement>()
     const placements = new Set(active?.descriptor.placements.filter(placement => PORTAL_TARGETS[placement] !== undefined) ?? [])
@@ -63,7 +67,9 @@ function usePlacementMounts(active: ActiveSkinExperience | undefined): Partial<R
         if (target === null) continue
         const mount = document.createElement('div')
         mount.dataset.dshSkinExperienceMount = placement
-        if (themeId !== undefined) mount.dataset.dshSkinExperienceTheme = themeId
+        if (placement === 'skin.sidebar.brand' && sidebarBrandVariant !== undefined) {
+          mount.dataset.dshSkinExperienceVariant = sidebarBrandVariant
+        }
         mount.className = placement === 'skin.sidebar.brand'
           ? `${css.portal!} ${css.sidebarBrand!}`
           : css.portal!
@@ -91,7 +97,7 @@ function usePlacementMounts(active: ActiveSkinExperience | undefined): Partial<R
       for (const mount of owned.values()) mount.remove()
       setMounts({})
     }
-  }, [placementKey, themeId])
+  }, [placementKey, moduleId, revision, sidebarBrandVariant])
   return mounts
 }
 

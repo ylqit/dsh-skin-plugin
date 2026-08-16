@@ -10,6 +10,7 @@ export interface SkinExperienceComponentProps {
 export interface ActiveSkinExperience {
   descriptor: SkinExperienceDescriptor
   themeId: string
+  skinId: string | undefined
   mode: 'light' | 'dark'
   components: Readonly<Partial<Record<SkinPlacement, ComponentType<SkinExperienceComponentProps>>>>
 }
@@ -41,10 +42,10 @@ export class SkinExperienceRuntime {
     return () => { this.listeners.delete(listener) }
   }
 
-  async install(descriptor: SkinExperienceDescriptor, themeId: string): Promise<void> {
+  async install(descriptor: SkinExperienceDescriptor, themeId: string, skinId?: string): Promise<void> {
     const current = this.snapshotValue
     if (current?.descriptor.moduleId === descriptor.moduleId && current.descriptor.rev === descriptor.rev) {
-      this.publish({ ...current, descriptor, themeId })
+      this.publish({ ...current, descriptor, themeId, skinId })
       return
     }
 
@@ -67,6 +68,7 @@ export class SkinExperienceRuntime {
       this.publish({
         descriptor,
         themeId,
+        skinId,
         mode: this.mode,
         components,
       })
