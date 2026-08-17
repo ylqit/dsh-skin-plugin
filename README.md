@@ -2,6 +2,20 @@
 
 DeepSeek Harness `0.1.0-rc.5` 的安全声明式换肤插件。`0.4.0` 仅接受 `.dshskin` schema v4；v1、v2、v3 均直接拒绝且不会写入磁盘。
 
+## 效果预览
+
+三个主题共享同一套声明式运行时，仅切换 Token、背景、Theme Parts 样式和安全视觉素材。
+
+| 皮卡丘 · Light | 皮卡丘 · Dark |
+| :---: | :---: |
+| [![皮卡丘电能浅色主题预览](https://raw.githubusercontent.com/ylqit/dsh-skin-plugin/master/preview/theme-pikachu-light.webp)](https://raw.githubusercontent.com/ylqit/dsh-skin-plugin/master/preview/theme-pikachu-light.webp) | [![皮卡丘电能深色主题预览](https://raw.githubusercontent.com/ylqit/dsh-skin-plugin/master/preview/theme-pikachu-dark.webp)](https://raw.githubusercontent.com/ylqit/dsh-skin-plugin/master/preview/theme-pikachu-dark.webp) |
+| **杰尼龟水舱** | **妙蛙种子生长舱** |
+| [![杰尼龟水舱浅色主题预览](https://raw.githubusercontent.com/ylqit/dsh-skin-plugin/master/preview/theme-squirtle-light.webp)](https://raw.githubusercontent.com/ylqit/dsh-skin-plugin/master/preview/theme-squirtle-light.webp) | [![妙蛙种子生长舱浅色主题预览](https://raw.githubusercontent.com/ylqit/dsh-skin-plugin/master/preview/theme-bulbasaur-light.webp)](https://raw.githubusercontent.com/ylqit/dsh-skin-plugin/master/preview/theme-bulbasaur-light.webp) |
+
+### 主题管理与编辑
+
+[![组件换肤工作室主题库与内置主题管理页面](https://raw.githubusercontent.com/ylqit/dsh-skin-plugin/master/preview/studio-theme-library.webp)](https://raw.githubusercontent.com/ylqit/dsh-skin-plugin/master/preview/studio-theme-library.webp)
+
 ## 安装
 
 ```bash
